@@ -17,7 +17,8 @@ import {
   ChevronLeft,
   ChevronRight,
   FileSpreadsheet,
-  AlertCircle
+  AlertCircle,
+  X
 } from 'lucide-react';
 import { db } from '../services/supabaseMock';
 import Swal from 'sweetalert2';
@@ -381,10 +382,11 @@ const TeacherStudents: React.FC = () => {
 
   // Filters logic
   const filteredStudents = students.filter(student => {
-    const matchesSearch = 
-      student.namalengkap.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      student.nis.toLowerCase().includes(searchQuery.toLowerCase());
-    
+    const query = searchQuery.trim().toLowerCase();
+    const nameStr = (student.namalengkap || '').toString().toLowerCase();
+    const nisStr = (student.nis || '').toString().toLowerCase();
+
+    const matchesSearch = !query || nameStr.includes(query) || nisStr.includes(query);
     const matchesKelas = selectedKelas === 'Semua' || student.kelas === selectedKelas;
 
     return matchesSearch && matchesKelas;
@@ -718,20 +720,32 @@ const TeacherStudents: React.FC = () => {
         </div>
 
         {/* SEARCH UTILITY */}
-        <div className="relative">
-          <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-            <Search size={14} className="text-slate-400" />
+        <div className="relative flex items-center">
+          <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
+            <Search size={16} className="text-slate-400" />
           </span>
           <input
             type="text"
-            placeholder="Cari Nama Siswa atau NIS..."
+            placeholder="Cari Nama Siswa atau NIS secara real-time..."
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setCurrentPage(1); // reset to first page
             }}
-            className="w-full pl-9 pr-3 py-2 text-slate-850 border border-slate-200 bg-slate-50/50 hover:bg-slate-50 focus:bg-white rounded-xl text-xs focus:ring-2 focus:ring-amber-500 transition-all outline-none"
+            className="w-full pl-10 pr-10 py-2.5 text-slate-800 border border-slate-200 bg-slate-50/50 hover:bg-slate-50 focus:bg-white rounded-2xl text-xs focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all outline-none shadow-sm font-medium"
           />
+          {searchQuery && (
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                setCurrentPage(1);
+              }}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 transition"
+              title="Bersihkan Pencarian"
+            >
+              <X size={15} />
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -743,9 +757,21 @@ const TeacherStudents: React.FC = () => {
           <div className="flex flex-col items-center justify-center text-center p-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
             <AlertCircle size={24} className="text-slate-400 mb-1" />
             <p className="text-xs font-bold text-slate-600 uppercase mb-0.5">Data Tidak Ditemukan</p>
-            <p className="text-[10px] text-slate-400 max-w-xs leading-normal">
+            <p className="text-[10px] text-slate-400 max-w-xs leading-normal mb-3">
               Siswa dengan pencarian "{searchQuery}" atau kelas "{selectedKelas}" belum terdaftar. Silakan tambah manual atau impor data.
             </p>
+            {(searchQuery || selectedKelas !== 'Semua') && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedKelas('Semua');
+                  setCurrentPage(1);
+                }}
+                className="px-3.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-bold rounded-xl border border-amber-200/80 transition shadow-sm active:scale-95"
+              >
+                Bersihkan Filter &amp; Pencarian
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-4">

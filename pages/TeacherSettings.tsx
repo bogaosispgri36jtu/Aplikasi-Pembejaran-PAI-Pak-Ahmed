@@ -111,6 +111,58 @@ const TeacherSettings: React.FC = () => {
     }
   };
 
+  const handleClearSyncCache = async () => {
+    const confirm = await Swal.fire({
+      title: 'Bersihkan Cache Sinkronisasi?',
+      text: 'Aplikasi akan menghapus cache lokal dan memaksa memuat ulang data paling segar langsung dari Google Sheets. Lanjutkan?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#059669',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Ya, Bersihkan & Muat Ulang',
+      cancelButtonText: 'Batal',
+      heightAuto: false
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    setIsSyncing(true);
+    Swal.fire({
+      title: 'Membersihkan Cache...',
+      text: 'Menghapus cache lokal & mengambil data segar dari Google Sheets...',
+      didOpen: () => Swal.showLoading(),
+      allowOutsideClick: false,
+      heightAuto: false
+    });
+
+    try {
+      await db.clearSyncCacheAndPull();
+      Swal.close();
+      setTimeout(() => {
+        Swal.fire({
+          icon: 'success',
+          title: 'Cache Sinkronisasi Dibersihkan!',
+          text: 'Data lokal telah diperbarui sepenuhnya sesuai data terbaru di Google Sheets.',
+          confirmButtonColor: '#059669',
+          heightAuto: false
+        });
+      }, 150);
+    } catch (err: any) {
+      Swal.close();
+      setTimeout(() => {
+        Swal.fire({
+          icon: 'error',
+          title: 'Gagal Memuat Data',
+          text: err.message || 'Terjadi kesalahan saat memuat ulang data dari Google Sheets.',
+          confirmButtonColor: '#dc2626',
+          heightAuto: false
+        });
+      }, 150);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const secureReset = async (type: 'absensi' | 'nilai' | 'tugas' | 'siswa' | 'materi' | 'ujian' | 'bank_soal' | 'hasil_ujian' | 'tujuan_pembelajaran' | 'asesmen_tp' | 'semua') => {
     const labels = { 
       absensi: 'Absensi', 
@@ -304,23 +356,35 @@ const TeacherSettings: React.FC = () => {
                   </div>
 
                   {/* TOMBOL MANUSIA / SINKRONISASI MANUAL KE & DARI GOOGLE SHEETS */}
-                  <div className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <button
-                      onClick={handleManualSyncToSheets}
-                      disabled={isSyncing}
-                      className="w-full py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-                      <span>Kirim Data Ke Sheets</span>
-                    </button>
+                  <div className="pt-3 border-t border-slate-100 space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        onClick={handleManualSyncToSheets}
+                        disabled={isSyncing}
+                        className="w-full py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+                        <span>Kirim Data Ke Sheets</span>
+                      </button>
+
+                      <button
+                        onClick={handleManualPullFromSheets}
+                        disabled={isSyncing}
+                        className="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <Download size={14} className={isSyncing ? "animate-spin" : ""} />
+                        <span>Tarik Data Dari Sheets</span>
+                      </button>
+                    </div>
 
                     <button
-                      onClick={handleManualPullFromSheets}
+                      onClick={handleClearSyncCache}
                       disabled={isSyncing}
-                      className="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                      title="Bersihkan cache sinkronisasi dan paksa muat ulang data terbaru dari Google Sheets"
                     >
-                      <Download size={14} className={isSyncing ? "animate-spin" : ""} />
-                      <span>Tarik Data Dari Sheets</span>
+                      <Trash2 size={13} />
+                      <span>Bersihkan Cache Sinkronisasi</span>
                     </button>
                   </div>
                 </div>

@@ -6,6 +6,12 @@ interface SheetConfig {
   headers: string[];
 }
 
+export interface SyncStatusInfo {
+  status: 'success' | 'error' | 'syncing' | 'idle';
+  lastSyncTime: string | null;
+  message: string;
+}
+
 const TABS_CONFIG: SheetConfig[] = [
   { name: 'admin_users', headers: ['id', 'username', 'fullname', 'password', 'role', 'created_at'] },
   { name: 'admin user', headers: ['id', 'username', 'fullname', 'password', 'role', 'created_at'] },
@@ -240,6 +246,52 @@ class DatabaseService {
     };
   }
 
+  public setSyncStatus(status: 'success' | 'error' | 'syncing' | 'idle', message: string) {
+    const info: SyncStatusInfo = {
+      status,
+      lastSyncTime: status === 'syncing' ? (localStorage.getItem('pai_last_sync_time') || new Date().toISOString()) : new Date().toISOString(),
+      message
+    };
+    localStorage.setItem('pai_sync_status_info', JSON.stringify(info));
+    if (status === 'success') {
+      localStorage.setItem('pai_last_sync_time', info.lastSyncTime!);
+    }
+  }
+
+  public getSyncStatus(): SyncStatusInfo {
+    try {
+      const raw = localStorage.getItem('pai_sync_status_info');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return {
+      status: 'idle',
+      lastSyncTime: localStorage.getItem('pai_last_sync_time') || null,
+      message: 'Belum ada aktivitas sinkronisasi.'
+    };
+  }
+
+  // Membersihkan cache sinkronisasi lokal dan memuat ulang dari Google Sheets
+  async clearSyncCacheAndPull(): Promise<void> {
+    this.setSyncStatus('syncing', 'Membersihkan cache & memuat ulang dari Google Sheets...');
+    TABS_CONFIG.forEach(cfg => {
+      localStorage.removeItem(`pai_db_${cfg.name}`);
+    });
+    localStorage.removeItem('pai_db_nilai_rapot');
+    localStorage.removeItem('pai_db_kelola_nilai');
+    localStorage.removeItem('pai_db_admin_users');
+    localStorage.removeItem('pai_db_admin user');
+    localStorage.removeItem('pai_grades_tps');
+    localStorage.removeItem('pai_grades_assessments');
+
+    try {
+      await this.syncFromGoogleSheets();
+      this.setSyncStatus('success', 'Cache berhasil dibersihkan dan data terbaru dimuat.');
+    } catch (err: any) {
+      this.setSyncStatus('error', err.message || 'Gagal memuat ulang data setelah membersihkan cache.');
+      throw err;
+    }
+  }
+
   // SPREADSHEET ID CONFIGURATION
   async getSpreadsheetId(): Promise<string | null> {
     return localStorage.getItem('google_spreadsheet_id') || import.meta.env.VITE_GOOGLE_SPREADSHEET_ID || '1G_iMlKROJmq0UPb1Angg4IphW7BxVcron8yBEla7p2c';
@@ -391,9 +443,89 @@ class DatabaseService {
 
   // Sinkronisasi lokal (LocalStorage) -> Google Sheets
   async syncToGoogleSheets(accessToken?: string): Promise<void> {
-    const appsScriptUrl = await this.getAppsScriptUrl();
-    if (appsScriptUrl) {
+    this.setSyncStatus('syncing', 'Sedang mengirim seluruh data ke Google Sheets...');
+    try {
+      const appsScriptUrl = await this.getAppsScriptUrl();
+      if (appsScriptUrl) {
+        for (const cfg of TABS_CONFIG) {
+          const items = this.getLocalTable(cfg.name);
+          const values: any[][] = [cfg.headers];
+          
+          items.forEach((item: any) => {
+            const row = cfg.headers.map(header => {
+              const val = item[header];
+              if (val === undefined || val === null) return '';
+              if (typeof val === 'object') return JSON.stringify(val);
+              return val;
+            });
+            values.push(row);
+          });
+
+          const res = await fetch(appsScriptUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/plain'
+            },
+            body: JSON.stringify({
+              sheet: cfg.name,
+              values: values
+            })
+          });
+          if (!res.ok) {
+            throw new Error(`Koneksi ke Apps Script gagal dengan status HTTP ${res.status}`);
+          }
+        }
+        this.setSyncStatus('success', 'Seluruh data berhasil disinkronkan ke Google Sheets.');
+        return;
+      }
+
+      const token = accessToken || localStorage.getItem('google_oauth_token') || '';
+      const spreadsheetId = await this.getSpreadsheetId();
+      if (!spreadsheetId) {
+        throw new Error("Spreadsheet ID belum terkonfigurasi!");
+      }
+
+      await this.initializeExistingSpreadsheet(spreadsheetId, token);
+
       for (const cfg of TABS_CONFIG) {
+        const items = this.getLocalTable(cfg.name);
+        const values: any[][] = [cfg.headers];
+        
+        items.forEach((item: any) => {
+          const row = cfg.headers.map(header => {
+            const val = item[header];
+            if (val === undefined || val === null) return '';
+            if (typeof val === 'object') return JSON.stringify(val);
+            return val;
+          });
+          values.push(row);
+        });
+
+        await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000?valueInputOption=USER_ENTERED`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            range: `${cfg.name}!A1:Z5000`,
+            majorDimension: 'ROWS',
+            values: values
+          })
+        }, token);
+      }
+      this.setSyncStatus('success', 'Seluruh data berhasil disinkronkan ke Google Sheets.');
+    } catch (err: any) {
+      this.setSyncStatus('error', err.message || 'Gagal menyinkronkan data ke Google Sheets');
+      throw err;
+    }
+  }
+
+  // Sinkronisasi khusus SATU tabel lokal -> Google Sheets (Hemat kuota API & Sangat Cepat!)
+  async syncTableToGoogleSheets(tableName: string, accessToken?: string): Promise<void> {
+    this.setSyncStatus('syncing', `Menyinkronkan tabel ${tableName}...`);
+    try {
+      const appsScriptUrl = await this.getAppsScriptUrl();
+      if (appsScriptUrl) {
+        const cfg = TABS_CONFIG.find(c => c.name === tableName);
+        if (!cfg) return;
+
         const items = this.getLocalTable(cfg.name);
         const values: any[][] = [cfg.headers];
         
@@ -413,96 +545,26 @@ class DatabaseService {
             'Content-Type': 'text/plain'
           },
           body: JSON.stringify({
-            sheet: cfg.name,
+            sheet: tableName,
             values: values
           })
         });
         if (!res.ok) {
           throw new Error(`Koneksi ke Apps Script gagal dengan status HTTP ${res.status}`);
         }
+        this.setSyncStatus('success', `Tabel ${tableName} berhasil tersimpan ke Google Sheets.`);
+        return;
       }
-      return;
-    }
 
-    const token = accessToken || localStorage.getItem('google_oauth_token') || '';
-    const spreadsheetId = await this.getSpreadsheetId();
-    if (!spreadsheetId) {
-      throw new Error("Spreadsheet ID belum terkonfigurasi!");
-    }
+      const token = accessToken || localStorage.getItem('google_oauth_token') || '';
+      const spreadsheetId = await this.getSpreadsheetId();
+      if (!spreadsheetId) {
+        throw new Error("Spreadsheet ID belum terkonfigurasi!");
+      }
 
-    await this.initializeExistingSpreadsheet(spreadsheetId, token);
-
-    for (const cfg of TABS_CONFIG) {
-      const items = this.getLocalTable(cfg.name);
-      const values: any[][] = [cfg.headers];
-      
-      items.forEach((item: any) => {
-        const row = cfg.headers.map(header => {
-          const val = item[header];
-          if (val === undefined || val === null) return '';
-          if (typeof val === 'object') return JSON.stringify(val);
-          return val;
-        });
-        values.push(row);
-      });
-
-      await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000?valueInputOption=USER_ENTERED`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          range: `${cfg.name}!A1:Z5000`,
-          majorDimension: 'ROWS',
-          values: values
-        })
-      }, token);
-    }
-  }
-
-  // Sinkronisasi khusus SATU tabel lokal -> Google Sheets (Hemat kuota API & Sangat Cepat!)
-  async syncTableToGoogleSheets(tableName: string, accessToken?: string): Promise<void> {
-    const appsScriptUrl = await this.getAppsScriptUrl();
-    if (appsScriptUrl) {
       const cfg = TABS_CONFIG.find(c => c.name === tableName);
       if (!cfg) return;
 
-      const items = this.getLocalTable(cfg.name);
-      const values: any[][] = [cfg.headers];
-      
-      items.forEach((item: any) => {
-        const row = cfg.headers.map(header => {
-          const val = item[header];
-          if (val === undefined || val === null) return '';
-          if (typeof val === 'object') return JSON.stringify(val);
-          return val;
-        });
-        values.push(row);
-      });
-
-      const res = await fetch(appsScriptUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain'
-        },
-        body: JSON.stringify({
-          sheet: tableName,
-          values: values
-        })
-      });
-      if (!res.ok) {
-        throw new Error(`Koneksi ke Apps Script gagal dengan status HTTP ${res.status}`);
-      }
-      return;
-    }
-
-    const token = accessToken || localStorage.getItem('google_oauth_token') || '';
-    const spreadsheetId = await this.getSpreadsheetId();
-    if (!spreadsheetId) {
-      throw new Error("Spreadsheet ID belum terkonfigurasi!");
-    }
-
-    const cfg = TABS_CONFIG.find(c => c.name === tableName);
-    if (!cfg) return;
-
-    try {
       // 1. Ambil metadata untuk cek apakah sheet dengan nama tableName sudah ada
       const metadata = await this.fetchSheetsAPI(spreadsheetId, '?fields=sheets.properties', { method: 'GET' }, token);
       const existingSheetNames = (metadata.sheets || []).map((s: any) => s.properties.title);
@@ -558,8 +620,10 @@ class DatabaseService {
       }, token);
 
       console.log(`Berhasil menyinkronkan tabel ${tableName} ke Google Sheets.`);
+      this.setSyncStatus('success', `Tabel ${tableName} berhasil tersimpan ke Google Sheets.`);
     } catch (err: any) {
       console.error(`Gagal menyinkronkan tabel ${tableName} ke Google Sheets:`, err);
+      this.setSyncStatus('error', err.message || `Gagal menyinkronkan tabel ${tableName}`);
       throw err;
     }
   }

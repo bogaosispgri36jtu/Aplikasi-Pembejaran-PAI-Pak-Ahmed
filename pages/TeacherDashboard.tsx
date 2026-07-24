@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Swal from 'sweetalert2';
 import { 
   Users, 
   Award, 
@@ -18,9 +19,13 @@ import {
   Target,
   Activity,
   BookOpen,
-  ClipboardList
+  ClipboardList,
+  WifiOff,
+  Cloud,
+  CloudOff,
+  RefreshCw
 } from 'lucide-react';
-import { db } from '../services/supabaseMock';
+import { db, SyncStatusInfo } from '../services/supabaseMock';
 
 const TeacherDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -30,6 +35,77 @@ const TeacherDashboard: React.FC = () => {
     onlineExamsCount: 0,
     attendanceDone: false
   });
+
+  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [syncInfo, setSyncInfo] = useState<SyncStatusInfo>({ status: 'idle', lastSyncTime: null, message: '' });
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+
+  const refreshSyncState = () => {
+    setIsOnline(navigator.onLine);
+    const info = db.getSyncStatus();
+    setSyncInfo(info);
+  };
+
+  useEffect(() => {
+    refreshSyncState();
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      refreshSyncState();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      refreshSyncState();
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const interval = setInterval(refreshSyncState, 3000);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleSyncNow = async () => {
+    if (!isOnline) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Perangkat Offline',
+        text: 'Anda sedang tidak terhubung ke jaringan internet. Pastikan koneksi internet aktif untuk mengirim data ke Google Sheets.',
+        confirmButtonColor: '#059669',
+        heightAuto: false
+      });
+      return;
+    }
+
+    setIsManualSyncing(true);
+    try {
+      await db.syncToGoogleSheets();
+      refreshSyncState();
+      Swal.fire({
+        icon: 'success',
+        title: 'Tersimpan & Tersinkron!',
+        text: 'Data terbaru berhasil dikirim dan tersimpan di Google Sheets.',
+        confirmButtonColor: '#059669',
+        heightAuto: false
+      });
+    } catch (err: any) {
+      refreshSyncState();
+      Swal.fire({
+        icon: 'error',
+        title: 'Gagal Sinkronisasi',
+        text: err.message || 'Terjadi kesalahan saat menyinkronkan data ke Google Sheets.',
+        confirmButtonColor: '#dc2626',
+        heightAuto: false
+      });
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
 
   useEffect(() => {
     const loadStats = async () => {
@@ -86,6 +162,87 @@ const TeacherDashboard: React.FC = () => {
           <span className="text-[10px] md:text-xs font-bold uppercase tracking-wider">
             {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
           </span>
+        </div>
+      </div>
+
+      {/* INDIKATOR STATUS KONEKSI & SINKRONISASI GOOGLE SHEETS */}
+      <div className={`p-4 rounded-2xl border transition-all duration-300 ${
+        !isOnline || syncInfo.status === 'error'
+          ? 'bg-rose-50/90 border-rose-200 shadow-sm'
+          : syncInfo.status === 'syncing' || isManualSyncing
+          ? 'bg-amber-50/90 border-amber-200 shadow-sm'
+          : 'bg-emerald-50/90 border-emerald-200 shadow-sm'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+              !isOnline || syncInfo.status === 'error'
+                ? 'bg-rose-100 text-rose-700'
+                : syncInfo.status === 'syncing' || isManualSyncing
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-emerald-100 text-emerald-700'
+            }`}>
+              {!isOnline ? (
+                <WifiOff size={20} />
+              ) : syncInfo.status === 'syncing' || isManualSyncing ? (
+                <RefreshCw size={20} className="animate-spin" />
+              ) : syncInfo.status === 'error' ? (
+                <CloudOff size={20} />
+              ) : (
+                <Cloud size={20} />
+              )}
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${
+                  !isOnline || syncInfo.status === 'error'
+                    ? 'bg-rose-500 animate-ping'
+                    : syncInfo.status === 'syncing' || isManualSyncing
+                    ? 'bg-amber-500 animate-pulse'
+                    : 'bg-emerald-500 animate-pulse'
+                }`}></span>
+                <h4 className={`text-xs md:text-sm font-extrabold uppercase tracking-wider ${
+                  !isOnline || syncInfo.status === 'error'
+                    ? 'text-rose-800'
+                    : syncInfo.status === 'syncing' || isManualSyncing
+                    ? 'text-amber-800'
+                    : 'text-emerald-800'
+                }`}>
+                  {!isOnline
+                    ? 'Koneksi Offline (Internet Terputus)'
+                    : syncInfo.status === 'syncing' || isManualSyncing
+                    ? 'Menyinkronkan Data ke Google Sheets...'
+                    : syncInfo.status === 'error'
+                    ? 'Sinkronisasi Terkendala'
+                    : 'Koneksi Online — Tersimpan di Google Sheets'}
+                </h4>
+              </div>
+
+              <p className="text-[11px] text-slate-600 font-medium mt-0.5">
+                {!isOnline
+                  ? 'Input guru tersimpan lokal secara aman. Hubungkan ke internet untuk mengirim ke Google Sheets.'
+                  : syncInfo.status === 'error'
+                  ? `Terjadi kendala: ${syncInfo.message || 'Periksa koneksi Google Apps Script.'}`
+                  : syncInfo.status === 'syncing' || isManualSyncing
+                  ? 'Data guru sedang dikirim dan diperbarui ke Google Sheets...'
+                  : `Seluruh data tersimpan aman ${syncInfo.lastSyncTime ? `(Terakhir sinkron: ${new Date(syncInfo.lastSyncTime).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })})` : ''}`}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleSyncNow}
+            disabled={isManualSyncing || syncInfo.status === 'syncing'}
+            className={`px-3.5 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shrink-0 shadow-sm ${
+              !isOnline || syncInfo.status === 'error'
+                ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                : 'bg-emerald-700 hover:bg-emerald-800 text-white'
+            } disabled:opacity-50`}
+          >
+            <RefreshCw size={13} className={isManualSyncing || syncInfo.status === 'syncing' ? 'animate-spin' : ''} />
+            <span>{isManualSyncing || syncInfo.status === 'syncing' ? 'Menyimpan...' : 'Sinkronkan Data'}</span>
+          </button>
         </div>
       </div>
 
