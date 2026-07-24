@@ -16,13 +16,16 @@ import {
   ChevronUp,
   ChevronDown,
   AlertCircle,
-  Settings
+  Settings,
+  Moon,
+  Sun
 } from 'lucide-react';
 import { db } from '../services/supabaseMock';
 import Swal from 'sweetalert2';
 
 // Import Utils
 import { verifySecurityToken } from '../utils/security';
+import { getTheme, setTheme } from '../utils/theme';
 
 const TeacherSettings: React.FC = () => {
   const navigate = useNavigate();
@@ -30,12 +33,30 @@ const TeacherSettings: React.FC = () => {
   const [appsScriptUrl, setAppsScriptUrl] = useState<string>('');
   const [showTutorial, setShowTutorial] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => getTheme() === 'dark');
 
   useEffect(() => {
     db.getAppsScriptUrl().then(url => {
       if (url) setAppsScriptUrl(url);
     });
   }, []);
+
+  const handleToggleTheme = () => {
+    const nextTheme = isDarkMode ? 'light' : 'dark';
+    setTheme(nextTheme);
+    setIsDarkMode(!isDarkMode);
+    
+    Swal.fire({
+      icon: 'success',
+      title: nextTheme === 'dark' ? 'Mode Malam Aktif 🌙' : 'Mode Terang Aktif ☀️',
+      text: nextTheme === 'dark' 
+        ? 'Tampilan gelap diaktifkan agar mata tidak cepat lelah saat menginput nilai di malam hari.'
+        : 'Tampilan terang diaktifkan.',
+      timer: 1500,
+      showConfirmButton: false,
+      heightAuto: false
+    });
+  };
 
   const handleManualSyncToSheets = async () => {
     setIsSyncing(true);
@@ -290,10 +311,80 @@ const TeacherSettings: React.FC = () => {
       {/* RENDER BODY CARDS */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* LEFT COLUMN: Google Sheets */}
+        {/* LEFT COLUMN: Tema & Google Sheets */}
         <div className="lg:col-span-7 space-y-6">
           
-          {/* CARDS 1: INTEGRASI GOOGLE SHEETS */}
+          {/* CARD TEMA TERANG / GELAP (DARK MODE FOR NIGHT INPUT) */}
+          <div className="bg-white dark:bg-slate-800 p-5 md:p-6 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm space-y-4 transition-all">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className={`w-11 h-11 md:w-12 md:h-12 rounded-2xl flex items-center justify-center transition-all ${
+                  isDarkMode 
+                    ? 'bg-indigo-950/80 text-indigo-400 border border-indigo-700/60 shadow-inner' 
+                    : 'bg-amber-50 text-amber-600 border border-amber-100'
+                }`}>
+                  {isDarkMode ? <Moon size={22} className="animate-pulse" /> : <Sun size={22} />}
+                </div>
+                <div>
+                  <h2 className="text-sm md:text-base font-black text-slate-800 dark:text-slate-100 uppercase tracking-tight">
+                    Mode Tampilan (Tema Malam / Gelap)
+                  </h2>
+                  <p className="text-slate-500 dark:text-slate-400 text-[10px] md:text-xs leading-relaxed">
+                    Beralih ke tampilan gelap agar nyaman dan tidak menyilaukan mata saat menginput nilai siswa di malam hari.
+                  </p>
+                </div>
+              </div>
+
+              {/* TOGGLE SWITCH BUTTON */}
+              <button
+                type="button"
+                onClick={handleToggleTheme}
+                id="btn-toggle-dark-mode"
+                className={`relative inline-flex h-8 w-16 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-300 ease-in-out focus:outline-hidden ${
+                  isDarkMode ? 'bg-indigo-600' : 'bg-slate-300'
+                }`}
+                role="switch"
+                aria-checked={isDarkMode}
+                title={isDarkMode ? 'Ubah ke Mode Terang' : 'Ubah ke Mode Malam'}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-md ring-0 transition duration-300 ease-in-out flex items-center justify-center ${
+                    isDarkMode ? 'translate-x-8 text-indigo-700' : 'translate-x-0 text-amber-500'
+                  }`}
+                >
+                  {isDarkMode ? <Moon size={14} /> : <Sun size={14} />}
+                </span>
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900/80 border border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs font-bold">
+              <span className="text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                <span>Status Mode:</span>
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+                  isDarkMode 
+                    ? 'bg-indigo-950 text-indigo-300 border border-indigo-700/60' 
+                    : 'bg-amber-100/80 text-amber-900 border border-amber-200/80'
+                }`}>
+                  {isDarkMode ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+                      <span>🌙 Mode Malam (Gelap)</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                      <span>☀️ Mode Terang (Siang)</span>
+                    </>
+                  )}
+                </span>
+              </span>
+              <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium italic">
+                Otomatis tersimpan untuk sesi ini &amp; berikutnya
+              </span>
+            </div>
+          </div>
+          
+          {/* CARDS 2: INTEGRASI GOOGLE SHEETS */}
           <div className="bg-white p-5 md:p-8 rounded-3xl border border-slate-100 shadow-sm space-y-6">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 md:w-12 md:h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">

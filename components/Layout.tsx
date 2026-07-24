@@ -21,11 +21,14 @@ import {
   Activity,
   Menu,
   ClipboardList,
-  ArrowLeft
+  ArrowLeft,
+  Moon,
+  Sun
 } from 'lucide-react';
 import BottomNav from './BottomNav';
 import TeacherLogin from '../pages/TeacherLogin';
 import Swal from 'sweetalert2';
+import { getTheme, setTheme, initTheme } from '../utils/theme';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -34,9 +37,22 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => getTheme() === 'dark');
   const location = useLocation();
   const navigate = useNavigate();
   const isTeacherPage = location.pathname.startsWith('/guru');
+
+  // Inisialisasi tema saat pertama kali dirender
+  useEffect(() => {
+    initTheme();
+    setIsDarkMode(getTheme() === 'dark');
+  }, []);
+
+  const handleQuickThemeToggle = () => {
+    const nextTheme = isDarkMode ? 'light' : 'dark';
+    setTheme(nextTheme);
+    setIsDarkMode(!isDarkMode);
+  };
 
   // Tutup sidebar saat berganti halaman/rute
   useEffect(() => {
@@ -201,12 +217,31 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               </div>
             </div>
 
-            <button 
-              onClick={handleLogout} 
-              className="flex items-center gap-1.5 bg-red-600 text-white px-3 py-1.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest shadow-md shadow-red-100 hover:bg-red-700 active:scale-95 transition-all"
-            >
-              <LogOut size={12} strokeWidth={3} /> <span>KELUAR</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Quick Dark Mode Toggle Button */}
+              <button
+                type="button"
+                onClick={handleQuickThemeToggle}
+                className={`p-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border active:scale-95 ${
+                  isDarkMode
+                    ? 'bg-indigo-950 text-indigo-300 border-indigo-700/60 hover:bg-indigo-900'
+                    : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                }`}
+                title={isDarkMode ? 'Beralih ke Mode Terang' : 'Beralih ke Mode Malam (Gelap)'}
+              >
+                {isDarkMode ? <Moon size={15} className="text-indigo-400" /> : <Sun size={15} className="text-amber-500" />}
+                <span className="hidden sm:inline text-[10px] uppercase font-black tracking-wider">
+                  {isDarkMode ? 'Malam' : 'Terang'}
+                </span>
+              </button>
+
+              <button 
+                onClick={handleLogout} 
+                className="flex items-center gap-1.5 bg-red-600 text-white px-3 py-1.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest shadow-md shadow-red-100 hover:bg-red-700 active:scale-95 transition-all"
+              >
+                <LogOut size={12} strokeWidth={3} /> <span>KELUAR</span>
+              </button>
+            </div>
           </header>
 
           <main className="flex-1 p-3 md:p-6 pb-20 md:pb-6 overflow-y-auto">
