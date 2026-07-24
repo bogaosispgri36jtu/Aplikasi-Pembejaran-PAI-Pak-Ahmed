@@ -129,12 +129,24 @@ function doGet(e) {
       }
     }
 
-    // Konversi tipe Date ke ISO String agar tidak merusak format JSON
+    // Konversi tipe Date & String ISO ke format tanggal YYYY-MM-DD (tanpa jam/waktu)
     for (var i = 0; i < values.length; i++) {
       for (var j = 0; j < values[i].length; j++) {
-        if (values[i][j] instanceof Date) {
-          values[i][j] = values[i][j].toISOString();
-        } else if (values[i][j] === null || values[i][j] === undefined) {
+        var val = values[i][j];
+        if (val instanceof Date) {
+          var y = val.getFullYear();
+          var m = ('0' + (val.getMonth() + 1)).slice(-2);
+          var d = ('0' + val.getDate()).slice(-2);
+          values[i][j] = y + '-' + m + '-' + d;
+        } else if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
+          values[i][j] = val.split('T')[0];
+        } else if (values[0] && (values[0][j] === 'date' || values[0][j] === 'tanggal') && typeof val === 'string' && val) {
+          if (val.indexOf('T') !== -1) {
+            values[i][j] = val.split('T')[0];
+          } else if (val.indexOf(' ') !== -1 && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+            values[i][j] = val.split(' ')[0];
+          }
+        } else if (val === null || val === undefined) {
           values[i][j] = "";
         }
       }
@@ -198,6 +210,16 @@ function doPost(e) {
             } else if (typeof val === 'object') {
               // Jika data berupa objek/array (misal opsi soal/jawaban), ubah ke JSON string
               values[r][c] = JSON.stringify(val);
+            } else if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
+              // Jika string berformat ISO Timestamp (misal: 2026-07-21T17:00:00.000Z), potong bagian waktunya
+              values[r][c] = val.split('T')[0];
+            } else if (values[0] && (values[0][c] === 'date' || values[0][c] === 'tanggal') && typeof val === 'string' && val) {
+              // Jika kolom secara spesifik bernama 'date' atau 'tanggal'
+              if (val.indexOf('T') !== -1) {
+                values[r][c] = val.split('T')[0];
+              } else if (val.indexOf(' ') !== -1 && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+                values[r][c] = val.split(' ')[0];
+              }
             }
 
             // Batasi panjang karakter per sel agar tidak melebihi limit Google Sheets (50.000 karakter)

@@ -31,6 +31,31 @@ const TABS_CONFIG: SheetConfig[] = [
   { name: 'JurnalHarian', headers: ['id', 'tanggal', 'kelas', 'jam_mengajar', 'deskripsi', 'created_at'] }
 ];
 
+export function formatDateOnly(val: any): string {
+  if (!val) return '';
+  const str = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
+  if (str.includes('T')) {
+    const dt = new Date(str);
+    if (!isNaN(dt.getTime())) {
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const d = String(dt.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return str.split('T')[0];
+  }
+  if (str.includes(' ')) {
+    const parts = str.split(' ');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
+      return parts[0];
+    }
+  }
+  return str;
+}
+
 class DatabaseService {
   private isSyncingFromSheets = false;
   // HELPER LOKAL DATASTORAGE (LOCALSTORAGE)
@@ -76,6 +101,12 @@ class DatabaseService {
           }
           if (newItem.kelas !== undefined && newItem.kelas !== null) {
             newItem.kelas = String(newItem.kelas).trim();
+          }
+          if (newItem.date !== undefined && newItem.date !== null) {
+            newItem.date = formatDateOnly(newItem.date);
+          }
+          if (newItem.tanggal !== undefined && newItem.tanggal !== null) {
+            newItem.tanggal = formatDateOnly(newItem.tanggal);
           }
           return newItem;
         }) as any[];
@@ -456,6 +487,7 @@ class DatabaseService {
             const row = cfg.headers.map(header => {
               const val = item[header];
               if (val === undefined || val === null) return '';
+              if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
               if (typeof val === 'object') return JSON.stringify(val);
               return val;
             });
@@ -506,6 +538,7 @@ class DatabaseService {
           const row = cfg.headers.map(header => {
             const val = item[header];
             if (val === undefined || val === null) return '';
+            if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
             if (typeof val === 'object') return JSON.stringify(val);
             return val;
           });
@@ -544,6 +577,7 @@ class DatabaseService {
           const row = cfg.headers.map(header => {
             const val = item[header];
             if (val === undefined || val === null) return '';
+            if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
             if (typeof val === 'object') return JSON.stringify(val);
             return val;
           });
@@ -617,6 +651,7 @@ class DatabaseService {
         const row = cfg.headers.map(header => {
           const val = item[header];
           if (val === undefined || val === null) return '';
+          if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
           if (typeof val === 'object') return JSON.stringify(val);
           return val;
         });
@@ -681,6 +716,9 @@ class DatabaseService {
                     }
                     const canonicalKey = this.getCanonicalHeader(header, cfg.headers);
                     if (canonicalKey) {
+                      if (canonicalKey === 'date' || canonicalKey === 'tanggal') {
+                        cellVal = formatDateOnly(cellVal);
+                      }
                       obj[canonicalKey] = cellVal;
                     }
                   });
@@ -738,6 +776,9 @@ class DatabaseService {
                 }
                 const canonicalKey = this.getCanonicalHeader(header, cfg.headers);
                 if (canonicalKey) {
+                  if (canonicalKey === 'date' || canonicalKey === 'tanggal') {
+                    cellVal = formatDateOnly(cellVal);
+                  }
                   obj[canonicalKey] = cellVal;
                 }
               });
@@ -1357,11 +1398,16 @@ class DatabaseService {
       const cleanRecord = {
         ...record,
         id,
+        date: formatDateOnly(record.date),
         created_at: new Date().toISOString()
       } as AttendanceRecord;
       list.push(cleanRecord);
     }
     this.setLocalTable('kehadiran', list);
+
+    this.syncTableToGoogleSheets('kehadiran').catch(err => {
+      console.warn("Gagal sinkronisasi otomatis kehadiran ke Google Sheets:", err);
+    });
   }
 
   async getAttendanceByStudent(studentId: string): Promise<AttendanceRecord[]> {
@@ -1371,10 +1417,20 @@ class DatabaseService {
 
   async getAttendanceByKelas(kelas: string, semester?: string, month?: string, year?: string): Promise<any[]> {
     const list = this.getLocalTable<AttendanceRecord>('kehadiran');
-    let filtered = list.filter(a => a.kelas === kelas);
+    let filtered = list.filter(a => String(a.kelas || '').trim().toLowerCase() === String(kelas || '').trim().toLowerCase());
 
     if (semester) {
-      filtered = filtered.filter((a: any) => String(a.semester) === String(semester));
+      const semStr = String(semester).trim().toLowerCase();
+      filtered = filtered.filter((a: any) => {
+        const recordSem = String(a.semester || '').trim().toLowerCase();
+        if (semStr === '1' || semStr === 'ganjil') {
+          return ['1', 'ganjil', 'semester 1', 'semester1'].includes(recordSem);
+        }
+        if (semStr === '2' || semStr === 'genap') {
+          return ['2', 'genap', 'semester 2', 'semester2'].includes(recordSem);
+        }
+        return recordSem === semStr;
+      });
     }
 
     if (month) {
@@ -1383,7 +1439,7 @@ class DatabaseService {
       filtered = filtered.filter((a: any) => a.date && a.date.startsWith(prefix));
     }
 
-    return filtered.sort((a: any, b: any) => a.date.localeCompare(b.date)).map((a: any) => ({
+    return filtered.sort((a: any, b: any) => (a.date || '').localeCompare(b.date || '')).map((a: any) => ({
       ...a,
       data_siswa: { namalengkap: a.nama_siswa, nis: a.nis }
     }));

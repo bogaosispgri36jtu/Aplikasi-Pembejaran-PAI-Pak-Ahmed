@@ -22,30 +22,30 @@ const TeacherInputAbsensi: React.FC = () => {
   const [alreadyExists, setAlreadyExists] = useState(false);
 
   useEffect(() => {
-    const checkExisting = async () => {
-      if (!selectedKelas || !date) {
+    const checkExistingSilent = async () => {
+      if (!selectedKelas || !date || !semester) {
         setAlreadyExists(false);
         return;
       }
       try {
-        const records = await db.getAttendanceByKelas(selectedKelas);
-        const exists = records.some((rec: any) => rec.date === date);
+        const records = await db.getAttendanceByKelas(selectedKelas, semester);
+        const exists = records.some((rec: any) => 
+          String(rec.date || '').trim() === String(date).trim() &&
+          String(rec.kelas || '').trim().toLowerCase() === String(selectedKelas).trim().toLowerCase() &&
+          (
+            String(rec.semester || '').trim() === String(semester).trim() ||
+            (semester === '1' && ['1', 'ganjil', 'semester 1', 'semester1'].includes(String(rec.semester || '').trim().toLowerCase())) ||
+            (semester === '2' && ['2', 'genap', 'semester 2', 'semester2'].includes(String(rec.semester || '').trim().toLowerCase()))
+          )
+        );
         setAlreadyExists(exists);
-        if (exists) {
-          Swal.fire({
-            icon: 'warning',
-            title: 'Absensi Ganda Terdeteksi',
-            text: `Absensi untuk kelas ${selectedKelas} pada tanggal ${date} sudah pernah di-input sebelumnya! Silakan pilih tanggal atau kelas lain.`,
-            confirmButtonColor: '#d97706',
-            heightAuto: false
-          });
-        }
       } catch (err) {
         console.error("Gagal memeriksa absensi ganda:", err);
       }
     };
-    checkExisting();
-  }, [selectedKelas, date]);
+
+    checkExistingSilent();
+  }, [selectedKelas, date, semester]);
 
   useEffect(() => {
     db.getAvailableKelas(grade).then((data: string[]) => {
@@ -79,46 +79,75 @@ const TeacherInputAbsensi: React.FC = () => {
       Swal.fire({ 
         icon: 'warning', 
         title: 'Perhatian', 
-        text: 'Kolom kosong wajib di pilih!', 
+        text: 'Semua kolom (Semester, Kelas, dan Tanggal) wajib dipilih!', 
+        confirmButtonColor: '#d97706',
+        confirmButtonText: 'OK',
         heightAuto: false 
       });
       return;
     }
 
     if (students.length === 0) { 
-      Swal.fire({ icon: 'error', title: 'Siswa Tidak Ada', text: 'Pilih kelas yang memiliki data siswa.', heightAuto: false }); 
+      Swal.fire({ 
+        icon: 'error', 
+        title: 'Siswa Tidak Ada', 
+        text: 'Pilih kelas yang memiliki data siswa.', 
+        confirmButtonColor: '#dc2626',
+        confirmButtonText: 'OK',
+        heightAuto: false 
+      }); 
       return; 
     }
 
-    // 1.5 Cek Absensi Ganda
-    if (alreadyExists) {
-      Swal.fire({
-        icon: 'error',
-        title: 'Absensi Ganda Terdeteksi',
-        text: `Absensi untuk kelas ${selectedKelas} pada tanggal ${date} sudah terisi sebelumnya! Silakan pilih tanggal lain.`,
-        confirmButtonColor: '#dc2626',
-        heightAuto: false 
-      });
-      return;
-    }
-    
-    // 2. Konfirmasi Sebelum Kirim
-    const result = await Swal.fire({ 
-      title: 'Simpan Rekap Absensi?', 
-      text: `Kelas ${selectedKelas} - Semester ${semester} - Tanggal ${date}`, 
-      icon: 'question', 
-      showCancelButton: true, 
-      confirmButtonColor: '#d97706',
-      confirmButtonText: 'Ya, Simpan',
-      cancelButtonText: 'Batal',
-      heightAuto: false 
+    // 2. Tampilkan Pop-up Informasi Saat Proses Pengecekan & Pengiriman
+    setSaving(true);
+    Swal.fire({
+      title: 'Memeriksa & Mengirim Absensi...',
+      html: `Sedang memproses data absensi <b>Kelas ${selectedKelas}</b> (Semester <b>${semester}</b>) tanggal <b>${date}</b>...`,
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      showConfirmButton: false
     });
 
-    if (!result.isConfirmed) return;
-
-    setSaving(true);
     try {
-      const records = students.map(s => ({ 
+      // 3. Cek apakah kombinasi kelas, semester, dan tanggal sudah ada (Absensi Ganda)
+      const records = await db.getAttendanceByKelas(selectedKelas, semester);
+      const exists = records.some((rec: any) => 
+        String(rec.date || '').trim() === String(date).trim() &&
+        String(rec.kelas || '').trim().toLowerCase() === String(selectedKelas).trim().toLowerCase() &&
+        (
+          String(rec.semester || '').trim() === String(semester).trim() ||
+          (semester === '1' && ['1', 'ganjil', 'semester 1', 'semester1'].includes(String(rec.semester || '').trim().toLowerCase())) ||
+          (semester === '2' && ['2', 'genap', 'semester 2', 'semester2'].includes(String(rec.semester || '').trim().toLowerCase()))
+        )
+      );
+
+      // 4. Apabila GANDA: Tampilkan pesan error rincian bahwa absensi sudah diisi
+      if (exists) {
+        setAlreadyExists(true);
+        Swal.fire({
+          icon: 'error',
+          title: 'Absensi Ganda Terdeteksi!',
+          html: `
+            <div class="text-left text-xs sm:text-sm space-y-2 text-slate-700">
+              <p>Absensi untuk kombinasi berikut <b>sudah pernah terisi sebelumnya</b> di sistem:</p>
+              <div class="p-3 bg-red-50 rounded-xl border border-red-200 text-red-900 font-semibold space-y-1">
+                <p>• <b>Kelas:</b> ${selectedKelas}</p>
+                <p>• <b>Semester:</b> Semester ${semester}</p>
+                <p>• <b>Tanggal:</b> ${date}</p>
+              </div>
+              <p className="text-slate-500">Silakan ganti tanggal, kelas, atau semester jika ingin menginput data baru.</p>
+            </div>
+          `,
+          confirmButtonColor: '#dc2626',
+          confirmButtonText: 'OK, Saya Mengerti',
+          heightAuto: false 
+        });
+        return;
+      }
+
+      // 5. Apabila TIDAK GANDA: Langsung proses simpan/kirim data ke database
+      const attendanceRecords = students.map(s => ({ 
         student_id: s.id!, 
         nis: s.nis,                      
         nama_siswa: s.namalengkap,       
@@ -128,26 +157,31 @@ const TeacherInputAbsensi: React.FC = () => {
         semester: String(semester) 
       }));
       
-      await db.addAttendance(records);
+      await db.addAttendance(attendanceRecords);
       
-      // 6. Reset Semester (Clear Content) setelah berhasil
+      // Reset Semester & status ganda setelah berhasil
       setSemester('');
+      setAlreadyExists(false);
       
+      // 6. Tampilkan pesan konfirmasi sukses terkirim menggunakan SweetAlert2
       Swal.fire({ 
         icon: 'success', 
-        title: 'Alhamdulillah', 
-        text: `Absensi Kelas ${selectedKelas} tanggal ${date} berhasil disimpan.`, 
-        timer: 2000, 
-        showConfirmButton: false, 
+        title: 'Alhamdulillah! Berhasil Terkirim', 
+        html: `Rekap absensi untuk <b>Kelas ${selectedKelas}</b> (Semester <b>${semester}</b>) tanggal <b>${date}</b> berhasil disimpan.`, 
+        confirmButtonColor: '#059669',
+        confirmButtonText: 'OK',
+        timer: 3000, 
         heightAuto: false 
       });
+
     } catch (error: any) {
       console.error("Save Error:", error);
       Swal.fire({ 
         icon: 'error', 
         title: 'Gagal Menyimpan', 
-        text: 'Terjadi kesalahan pada sistem database.', 
+        text: 'Terjadi kesalahan sistem saat menyimpan data absensi.', 
         confirmButtonColor: '#dc2626',
+        confirmButtonText: 'OK',
         heightAuto: false 
       });
     } finally { 
@@ -211,7 +245,9 @@ const TeacherInputAbsensi: React.FC = () => {
             <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
             <div>
               <p className="font-extrabold text-red-800 uppercase tracking-tight">Absensi Sudah Terisi!</p>
-              <p className="text-red-600 font-medium leading-relaxed mt-0.5">Sistem mendeteksi bahwa absensi untuk kelas <span className="font-bold">{selectedKelas}</span> pada tanggal <span className="font-bold">{date}</span> sudah pernah diisi. Anda tidak dapat melakukan pengisian ganda untuk tanggal yang sama.</p>
+              <p className="text-red-600 font-medium leading-relaxed mt-0.5">
+                Sistem mendeteksi bahwa absensi untuk <span className="font-bold">Kelas {selectedKelas}</span> (Semester <span className="font-bold">{semester}</span>) pada tanggal <span className="font-bold">{date}</span> sudah pernah diisi. Anda tidak dapat melakukan pengisian ganda untuk kombinasi tanggal, kelas, dan semester yang sama.
+              </p>
             </div>
           </div>
         )}
