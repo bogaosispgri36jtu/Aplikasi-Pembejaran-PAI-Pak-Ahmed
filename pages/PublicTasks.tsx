@@ -160,56 +160,57 @@ const PublicTasks: React.FC = () => {
         const img = new Image();
         img.src = event.target?.result as string;
         img.onload = () => {
-          const canvas = document.createElement('canvas');
-          // Tingkatkan resolusi target ke 900px agar tulisan tangan siswa sangat tajam dan terbaca jelas oleh guru
-          const MAX_WIDTH = 900; 
-          let width = img.width;
-          let height = img.height;
-
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject('Canvas context error');
-            return;
-          }
+          // Batas aman karakter dataUrl agar muat dalam 1 sel Google Sheets (50.000 karakter)
+          const MAX_CELL_CHARS = 48500;
           
-          ctx.drawImage(img, 0, 0, width, height);
-          
-          // Mulai dengan kualitas tinggi (0.75) agar sangat tajam.
-          // Jika hasilnya terlalu besar untuk batas Google Sheets (48,500 karakter),
-          // kita perkecil kualitasnya secara bertahap (0.6, lalu 0.5, dst.) sampai ukurannya aman.
-          let quality = 0.75;
-          let dataUrl = canvas.toDataURL('image/jpeg', quality);
-          
-          while (dataUrl.length > 48500 && quality > 0.15) {
-            quality -= 0.10;
+          // Mulai dengan resolusi target 1100px dan kualitas JPEG tinggi (0.80)
+          // Penurunan dimensi secara bertahap menjaga ketajaman garis tulisan tangan pensil/pulpen tanpa buram
+          let targetWidth = 1100;
+          let quality = 0.80;
+          let dataUrl = '';
+
+          for (let step = 0; step < 15; step++) {
+            let width = img.width;
+            let height = img.height;
+
+            if (width > targetWidth) {
+              height = Math.round(height * (targetWidth / width));
+              width = targetWidth;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              reject('Canvas context error');
+              return;
+            }
+
+            // Kualitas smoothing tinggi saat meresize
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+
+            // Peningkatan kontras & kecerahan agar tulisan tangan pulpen/pensil tajam terbaca
+            ctx.filter = 'contrast(1.08) brightness(1.02)';
+            ctx.drawImage(img, 0, 0, width, height);
+
             dataUrl = canvas.toDataURL('image/jpeg', quality);
-          }
-          
-          // Jika masih melebihi batas, perkecil dimensi gambar menjadi 70% dan coba lagi
-          if (dataUrl.length > 48500) {
-            const smallerCanvas = document.createElement('canvas');
-            smallerCanvas.width = width * 0.7;
-            smallerCanvas.height = height * 0.7;
-            const sCtx = smallerCanvas.getContext('2d');
-            if (sCtx) {
-              sCtx.drawImage(canvas, 0, 0, smallerCanvas.width, smallerCanvas.height);
-              quality = 0.6;
-              dataUrl = smallerCanvas.toDataURL('image/jpeg', quality);
-              while (dataUrl.length > 48500 && quality > 0.15) {
-                quality -= 0.10;
-                dataUrl = smallerCanvas.toDataURL('image/jpeg', quality);
-              }
+
+            if (dataUrl.length <= MAX_CELL_CHARS) {
+              break;
+            }
+
+            // Jika masih melebihi 48.500 karakter:
+            // Utamakan menjaga kualitas JPEG tetap tinggi (min 0.65) agar tidak pecah/blur, lalu turunkan dimensi bertahap
+            if (quality > 0.72) {
+              quality -= 0.04;
+            } else {
+              targetWidth = Math.round(targetWidth * 0.88);
             }
           }
-          
+
           resolve(dataUrl);
         };
         img.onerror = (error) => reject(error);

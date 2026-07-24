@@ -99,9 +99,31 @@ const TeacherTaskCheck: React.FC = () => {
       });
 
       const imagesHtml = urls.map((url, i) => `
-        <div class="mb-4 border border-slate-100 rounded-2xl overflow-hidden bg-slate-50 p-2 shadow-sm">
-          <div class="text-[9px] font-black text-slate-500 mb-1.5 uppercase tracking-wider text-left pl-1">FOTO TUGAS KE-${i + 1} / ${urls.length}</div>
-          <img src="${url}" class="w-full rounded-xl object-contain max-h-[380px] border border-slate-200 bg-white" alt="Tugas ${i + 1}" />
+        <div class="mb-6 border border-slate-200 rounded-2xl overflow-hidden bg-slate-100/70 p-3 shadow-sm">
+          <div class="flex items-center justify-between mb-2 px-1">
+            <span class="text-[11px] font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-emerald-600 inline-block"></span>
+              FOTO TUGAS KE-${i + 1} DARI ${urls.length}
+            </span>
+            <button 
+              type="button" 
+              class="open-full-img-btn px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 shadow-sm transition active:scale-95"
+              data-url="${url}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+              <span>Perbesar / Tab Baru</span>
+            </button>
+          </div>
+          <div class="bg-slate-900/5 rounded-xl border border-slate-200 p-2 flex justify-center items-center overflow-auto max-h-[70vh]">
+            <img 
+              src="${url}" 
+              class="task-img-preview w-auto h-auto max-w-full max-h-[680px] object-contain rounded-lg shadow-md cursor-zoom-in transition-transform hover:scale-[1.01]" 
+              alt="Foto Tugas ${i + 1}"
+              style="image-rendering: -webkit-optimize-contrast; image-rendering: crisp-edges;"
+              data-url="${url}"
+              title="Klik untuk membuka dalam ukuran penuh"
+            />
+          </div>
         </div>
       `).join('');
 
@@ -122,13 +144,43 @@ const TeacherTaskCheck: React.FC = () => {
         console.error("Gagal memeriksa status nilai:", e);
       }
 
+      const openImageInNewTab = (imgUrl: string) => {
+        const win = window.open('', '_blank');
+        if (win) {
+          win.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Foto Tugas - ${task.student_name} (${task.kelas})</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                  body { margin: 0; background-color: #0f172a; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; box-sizing: border-box; font-family: sans-serif; }
+                  .header { color: #f8fafc; margin-bottom: 15px; text-align: center; }
+                  .header h2 { margin: 0 0 5px 0; font-size: 18px; }
+                  .header p { margin: 0; color: #94a3b8; font-size: 13px; }
+                  img { max-width: 100%; height: auto; border-radius: 12px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); border: 1px solid #334155; }
+                </style>
+              </head>
+              <body>
+                <div class="header">
+                  <h2>${task.task_name}</h2>
+                  <p>Siswa: <strong>${task.student_name} (${task.kelas})</strong> | Tanggal: ${dateStr}</p>
+                </div>
+                <img src="${imgUrl}" alt="Foto Tugas Siswa" />
+              </body>
+            </html>
+          `);
+        }
+      };
+
       const result = await Swal.fire({
         title: `Tugas: ${task.task_name}`,
+        width: 'min(96%, 1000px)',
         html: `
-          <div class="text-xs text-slate-500 font-medium mb-4 text-center">
-            Siswa: <span class="font-bold text-slate-800">${task.student_name}</span> (${task.kelas}) <br/> Tanggal: ${dateStr}
+          <div class="text-xs text-slate-600 font-medium mb-4 text-center bg-emerald-50 border border-emerald-200/80 p-2.5 rounded-2xl">
+            Siswa: <span class="font-bold text-slate-800 text-sm">${task.student_name}</span> (${task.kelas}) &nbsp;•&nbsp; Tanggal Kirim: <span class="font-bold text-slate-700">${dateStr}</span>
           </div>
-          <div class="space-y-4 max-h-[50vh] overflow-y-auto scrollbar-thin px-1 text-slate-700">
+          <div class="space-y-4 max-h-[72vh] overflow-y-auto scrollbar-thin px-1 text-slate-700">
             ${imagesHtml}
           </div>
         `,
@@ -138,8 +190,27 @@ const TeacherTaskCheck: React.FC = () => {
         confirmButtonColor: alreadyGraded ? '#64748b' : '#059669', // Abu-abu jika sudah dinilai, hijau jika belum
         cancelButtonColor: '#dc2626',
         reverseButtons: true,
-        customClass: { popup: 'rounded-3xl' },
-        heightAuto: false
+        customClass: { popup: 'rounded-3xl max-w-5xl shadow-2xl' },
+        heightAuto: false,
+        didOpen: () => {
+          // Event listeners untuk tombol perbesar & klik foto
+          const btns = document.querySelectorAll('.open-full-img-btn');
+          btns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const url = (btn as HTMLElement).dataset.url;
+              if (url) openImageInNewTab(url);
+            });
+          });
+
+          const imgs = document.querySelectorAll('.task-img-preview');
+          imgs.forEach(img => {
+            img.addEventListener('click', () => {
+              const url = (img as HTMLElement).dataset.url;
+              if (url) openImageInNewTab(url);
+            });
+          });
+        }
       });
 
       if (result.isConfirmed) {

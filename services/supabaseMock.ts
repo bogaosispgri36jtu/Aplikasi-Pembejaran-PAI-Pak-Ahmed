@@ -447,6 +447,7 @@ class DatabaseService {
     try {
       const appsScriptUrl = await this.getAppsScriptUrl();
       if (appsScriptUrl) {
+        let hasError = false;
         for (const cfg of TABS_CONFIG) {
           const items = this.getLocalTable(cfg.name);
           const values: any[][] = [cfg.headers];
@@ -461,21 +462,31 @@ class DatabaseService {
             values.push(row);
           });
 
-          const res = await fetch(appsScriptUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'text/plain'
-            },
-            body: JSON.stringify({
-              sheet: cfg.name,
-              values: values
-            })
-          });
-          if (!res.ok) {
-            throw new Error(`Koneksi ke Apps Script gagal dengan status HTTP ${res.status}`);
+          try {
+            const res = await fetch(appsScriptUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'text/plain'
+              },
+              body: JSON.stringify({
+                sheet: cfg.name,
+                values: values
+              })
+            });
+            if (!res.ok) {
+              console.warn(`Koneksi ke Apps Script untuk tabel ${cfg.name} memberikan status HTTP ${res.status}`);
+              hasError = true;
+            }
+          } catch (tabErr) {
+            console.warn(`Gagal menyinkronkan tabel ${cfg.name} via Apps Script:`, tabErr);
+            hasError = true;
           }
         }
-        this.setSyncStatus('success', 'Seluruh data berhasil disinkronkan ke Google Sheets.');
+        if (!hasError) {
+          this.setSyncStatus('success', 'Seluruh data berhasil disinkronkan ke Google Sheets.');
+        } else {
+          this.setSyncStatus('idle', 'Sebagian data berhasil disinkronkan ke Google Sheets.');
+        }
         return;
       }
 
@@ -539,31 +550,44 @@ class DatabaseService {
           values.push(row);
         });
 
-        const res = await fetch(appsScriptUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain'
-          },
-          body: JSON.stringify({
-            sheet: tableName,
-            values: values
-          })
-        });
-        if (!res.ok) {
-          throw new Error(`Koneksi ke Apps Script gagal dengan status HTTP ${res.status}`);
+        try {
+          const res = await fetch(appsScriptUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/plain'
+            },
+            body: JSON.stringify({
+              sheet: tableName,
+              values: values
+            })
+          });
+          if (res.ok) {
+            this.setSyncStatus('success', `Tabel ${tableName} berhasil tersimpan ke Google Sheets.`);
+            return;
+          } else {
+            console.warn(`Koneksi Apps Script untuk tabel ${tableName} memberikan status ${res.status}. Mencoba jalur REST API...`);
+          }
+        } catch (appsScriptErr: any) {
+          console.warn(`Panggilan Apps Script untuk tabel ${tableName} gagal (${appsScriptErr.message || appsScriptErr}), mencoba jalur REST API fallback...`);
         }
-        this.setSyncStatus('success', `Tabel ${tableName} berhasil tersimpan ke Google Sheets.`);
-        return;
       }
 
       const token = accessToken || localStorage.getItem('google_oauth_token') || '';
       const spreadsheetId = await this.getSpreadsheetId();
       if (!spreadsheetId) {
-        throw new Error("Spreadsheet ID belum terkonfigurasi!");
+        console.warn(`Spreadsheet ID tidak terkonfigurasi untuk sinkronisasi tabel ${tableName}. Data tersimpan di lokal.`);
+        this.setSyncStatus('idle', `Tabel ${tableName} tersimpan lokal (Spreadsheet ID / Apps Script belum terhubung).`);
+        return;
       }
 
       const cfg = TABS_CONFIG.find(c => c.name === tableName);
       if (!cfg) return;
+
+      if (!token) {
+        console.warn(`OAuth token tidak tersedia untuk sinkronisasi REST API tabel ${tableName}. Data tersimpan di lokal.`);
+        this.setSyncStatus('idle', `Tabel ${tableName} tersimpan lokal (OAuth token tidak tersedia).`);
+        return;
+      }
 
       // 1. Ambil metadata untuk cek apakah sheet dengan nama tableName sudah ada
       const metadata = await this.fetchSheetsAPI(spreadsheetId, '?fields=sheets.properties', { method: 'GET' }, token);
@@ -599,7 +623,7 @@ class DatabaseService {
         values.push(row);
       });
 
-      // 4. Bersihkan data lama di range A1:Z5000 terlebih dahulu agar baris di bagian bawah tidak tersisa jika ada data yang dihapus
+      // 4. Bersihkan data lama di range A1:Z5000 terlebih dahulu
       try {
         await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000:clear`, {
           method: 'POST',
@@ -622,9 +646,8 @@ class DatabaseService {
       console.log(`Berhasil menyinkronkan tabel ${tableName} ke Google Sheets.`);
       this.setSyncStatus('success', `Tabel ${tableName} berhasil tersimpan ke Google Sheets.`);
     } catch (err: any) {
-      console.error(`Gagal menyinkronkan tabel ${tableName} ke Google Sheets:`, err);
+      console.warn(`Penanganan terisolasi: Gagal menyinkronkan tabel ${tableName} ke Google Sheets:`, err);
       this.setSyncStatus('error', err.message || `Gagal menyinkronkan tabel ${tableName}`);
-      throw err;
     }
   }
 
@@ -1481,6 +1504,11 @@ class DatabaseService {
       
       records.push(newRecord);
       this.setLocalTable('kunjungan', records);
+
+      // Trigger sinkronisasi otomatis latar belakang jika koneksi Google Sheets/Apps Script dikonfigurasi
+      this.syncTableToGoogleSheets('kunjungan').catch(err => {
+        console.warn("Sinkronisasi otomatis kunjungan di latar belakang dilewati:", err?.message || err);
+      });
     } catch (e) {
       console.error("Gagal mencatat kunjungan:", e);
     }
@@ -1829,7 +1857,7 @@ class DatabaseService {
     list.push(newEntry);
     this.setLocalTable('JurnalHarian', list);
 
-    this.syncToGoogleSheets('JurnalHarian').catch(err => {
+    this.syncTableToGoogleSheets('JurnalHarian').catch(err => {
       console.warn("Gagal sinkronisasi JurnalHarian ke Google Sheets:", err);
     });
 

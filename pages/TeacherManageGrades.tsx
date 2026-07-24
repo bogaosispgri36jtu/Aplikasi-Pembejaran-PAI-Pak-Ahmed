@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, BookOpen, Plus, Trash2, Edit2, Check, Settings, Save, Award, Scroll, 
-  Users, CheckCircle2, ChevronRight, AlertTriangle, ListFilter, HelpCircle, FileDown, Eye, ShieldAlert
+  Users, CheckCircle2, ChevronRight, AlertTriangle, ListFilter, HelpCircle, FileDown, Eye, ShieldAlert, FileSpreadsheet
 } from 'lucide-react';
 import { db } from '../services/supabaseMock';
 import { Student } from '../types';
@@ -1172,27 +1172,21 @@ const TeacherManageGrades: React.FC = () => {
     }
   };
 
-  // Export Cumulative Spreadsheet Excel of all grades
+  // Export Cumulative Spreadsheet Excel of all grades and attendance using SheetJS
   const handleExportExcelLedger = () => {
     if (students.length === 0) {
-      Swal.fire({ icon: 'warning', title: 'Data Siswa Kosong', text: 'Tidak ada data siswa untuk diexport', heightAuto: false });
+      Swal.fire({
+        icon: 'warning',
+        title: 'Data Siswa Kosong',
+        text: 'Tidak ada data siswa pada kelas ini untuk diekspor ke format Excel.',
+        confirmButtonColor: '#059669',
+        heightAuto: false
+      });
       return;
     }
 
-    // Build headers
-    const headers = [
-      'NO', 'NIS', 'NAMA LENGKAP', 'KELAS', 'SEMESTER'
-    ];
-
-    // Add TP score columns
-    currentClassTps.forEach(tp => {
-      headers.push(`NILAI ${tp.code}`);
-    });
-
-    headers.push('RATA-RATA HARIAN', 'SUMATIF TENGAH SMT (STS)', 'SUMATIF AKHIR SMT (SAS)', 'NILAI AKHIR', 'PREDIKAT', 'DESKRIPSI', 'NILAI SIKAP', 'SAKIT', 'IZIN', 'ALPHA');
-
-    // Build row values
-    const rows = students.map((s, idx) => {
+    // 1. DATA SHEET 1: Rekap Nilai & Rapor
+    const rowsNilai = students.map((s, idx) => {
       const calculs = calculateStudentNilaiAkhir(s.id!);
       const predObj = getPredicateAndDesc(calculs.finalScore, s.id!);
       const overallKey = `${s.id!}_${selectedSemester}`;
@@ -1200,9 +1194,9 @@ const TeacherManageGrades: React.FC = () => {
 
       const rowData: Record<string, any> = {
         'NO': idx + 1,
-        'NIS': s.nis,
-        'NAMA LENGKAP': s.namalengkap,
-        'KELAS': s.kelas,
+        'NIS': s.nis || '-',
+        'NAMA LENGKAP': s.namalengkap || '-',
+        'KELAS': s.kelas || selectedKelas,
         'SEMESTER': selectedSemester === '1' ? '1 (Ganjil)' : '2 (Genap)'
       };
 
@@ -1212,27 +1206,100 @@ const TeacherManageGrades: React.FC = () => {
         rowData[`NILAI ${tp.code}`] = score !== null ? score : '-';
       });
 
-      rowData['RATA-RATA HARIAN'] = calculs.harian !== null ? calculs.harian : '-';
+      rowData['RATA-RATA HARIAN (NH)'] = calculs.harian !== null ? calculs.harian : '-';
       rowData['SUMATIF TENGAH SMT (STS)'] = over && over.sts !== '' ? over.sts : '-';
       rowData['SUMATIF AKHIR SMT (SAS)'] = over && over.sas !== '' ? over.sas : '-';
-      rowData['NILAI AKHIR'] = calculs.finalScore !== null ? calculs.finalScore : '-';
-      rowData['PREDIKAT'] = predObj.pred;
-      rowData['DESKRIPSI'] = predObj.desc;
       rowData['NILAI SIKAP'] = over && over.sikap ? over.sikap : getAttitudeTextFromScore(calculs.sikapScore);
-      rowData['SAKIT'] = over && over.kehadiran?.sakit ? over.kehadiran.sakit : 0;
-      rowData['IZIN'] = over && over.kehadiran?.izin ? over.kehadiran.izin : 0;
-      rowData['ALPHA'] = over && over.kehadiran?.alpha ? over.kehadiran.alpha : 0;
+      rowData['SKOR KEHADIRAN (%)'] = `${calculs.kehadiranScore}%`;
+      rowData['NILAI AKHIR RAPOR'] = calculs.finalScore !== null ? calculs.finalScore : '-';
+      rowData['PREDIKAT'] = predObj.pred;
+      rowData['DESKRIPSI CP'] = predObj.desc;
 
       return rowData;
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, `REKAP_NILAI_${selectedKelas}`);
+    // 2. DATA SHEET 2: Rekap Absensi Siswa
+    const rowsAbsensi = students.map((s, idx) => {
+      const calculs = calculateStudentNilaiAkhir(s.id!);
+      const overallKey = `${s.id!}_${selectedSemester}`;
+      const over = overalls[overallKey];
 
-    // Set layout parameters
-    XLSX.writeFile(workbook, `Rekap_Nilai_PAI_${selectedKelas}_Smt${selectedSemester}.xlsx`);
-    Swal.fire({ icon: 'success', title: 'Export Excel Berhasil', text: 'Data nilai telah diekspor', timer: 1500, showConfirmButton: false, heightAuto: false });
+      const sakit = over && over.kehadiran?.sakit ? over.kehadiran.sakit : 0;
+      const izin = over && over.kehadiran?.izin ? over.kehadiran.izin : 0;
+      const alpha = over && over.kehadiran?.alpha ? over.kehadiran.alpha : 0;
+      const totalAbsen = sakit + izin + alpha;
+      const pctKehadiran = calculs.kehadiranScore;
+
+      let statusKehadiran = 'Sangat Baik (Sempurna)';
+      if (pctKehadiran < 75) statusKehadiran = 'Perlu Perhatian Khusus';
+      else if (pctKehadiran < 85) statusKehadiran = 'Cukup';
+      else if (pctKehadiran < 95) statusKehadiran = 'Baik';
+
+      return {
+        'NO': idx + 1,
+        'NIS': s.nis || '-',
+        'NAMA LENGKAP': s.namalengkap || '-',
+        'KELAS': s.kelas || selectedKelas,
+        'SEMESTER': selectedSemester === '1' ? '1 (Ganjil)' : '2 (Genap)',
+        'SAKIT (HARI)': sakit,
+        'IZIN (HARI)': izin,
+        'ALPHA / TANPA KET (HARI)': alpha,
+        'TOTAL KETIDAKHADIRAN (HARI)': totalAbsen,
+        'SKOR KEHADIRAN (%)': `${pctKehadiran}%`,
+        'STATUS KEHADIRAN': statusKehadiran
+      };
+    });
+
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+
+    // Worksheet 1: Rekap Nilai
+    const wsNilai = XLSX.utils.json_to_sheet(rowsNilai);
+    if (rowsNilai.length > 0) {
+      const keys1 = Object.keys(rowsNilai[0]);
+      wsNilai['!cols'] = keys1.map(key => {
+        let maxLen = key.length;
+        rowsNilai.forEach(r => {
+          const val = r[key];
+          if (val !== undefined && val !== null) {
+            const str = val.toString();
+            if (str.length > maxLen) maxLen = str.length;
+          }
+        });
+        return { wch: Math.min(Math.max(maxLen + 3, 10), 60) };
+      });
+    }
+    XLSX.utils.book_append_sheet(workbook, wsNilai, `Rekap_Nilai_Smt${selectedSemester}`);
+
+    // Worksheet 2: Rekap Absensi
+    const wsAbsensi = XLSX.utils.json_to_sheet(rowsAbsensi);
+    if (rowsAbsensi.length > 0) {
+      const keys2 = Object.keys(rowsAbsensi[0]);
+      wsAbsensi['!cols'] = keys2.map(key => {
+        let maxLen = key.length;
+        rowsAbsensi.forEach(r => {
+          const val = (r as any)[key];
+          if (val !== undefined && val !== null) {
+            const str = val.toString();
+            if (str.length > maxLen) maxLen = str.length;
+          }
+        });
+        return { wch: Math.min(Math.max(maxLen + 3, 10), 45) };
+      });
+    }
+    XLSX.utils.book_append_sheet(workbook, wsAbsensi, `Rekap_Absensi_Smt${selectedSemester}`);
+
+    // Generate output file
+    const fileName = `Rekap_Nilai_dan_Absensi_PAI_Kelas_${selectedKelas}_Smt${selectedSemester}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+
+    Swal.fire({
+      icon: 'success',
+      title: 'Ekspor Excel Berhasil!',
+      text: `File Excel "${fileName}" dengan 2 Lembar Kerja (Nilai & Absensi) berhasil diunduh.`,
+      confirmButtonColor: '#059669',
+      heightAuto: false
+    });
   };
 
   // Filter for search recap table
@@ -1655,6 +1722,15 @@ const TeacherManageGrades: React.FC = () => {
               </button>
 
               <button 
+                onClick={handleExportExcelLedger}
+                className="py-1.5 px-3 rounded-lg bg-emerald-800 hover:bg-emerald-900 text-white text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1.5 shadow-sm active:scale-95 duration-100"
+                title="Ekspor Data Nilai dan Absensi ke Excel (.xlsx)"
+              >
+                <FileSpreadsheet size={13} />
+                Ekspor Excel (Nilai & Absensi)
+              </button>
+
+              <button 
                 onClick={handleClearCurrentData}
                 className="py-1.5 px-3 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 text-[10px] font-bold uppercase tracking-wider transition active:scale-95 duration-100"
               >
@@ -1864,9 +1940,10 @@ const TeacherManageGrades: React.FC = () => {
 
               <button 
                 onClick={handleExportExcelLedger}
-                className="py-1.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-black uppercase flex items-center gap-1.5 shadow active:scale-95 transition"
+                className="py-1.5 px-3 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-black uppercase flex items-center gap-1.5 shadow active:scale-95 transition"
+                title="Ekspor Data Nilai dan Absensi ke Excel (.xlsx)"
               >
-                <FileDown size={14} /> Export Leger Excel
+                <FileSpreadsheet size={14} /> Ekspor Excel (Nilai & Absensi)
               </button>
             </div>
           </div>
