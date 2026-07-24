@@ -1,0 +1,221 @@
+
+import React, { useEffect } from 'react';
+import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import Layout from './components/Layout';
+import Home from './pages/Home';
+import PublicProfile from './pages/PublicProfile';
+import PublicGrades from './pages/PublicGrades';
+import PublicAbsensi from './pages/PublicAbsensi';
+import PublicTasks from './pages/PublicTasks';
+import PublicMaterials from './pages/PublicMaterials';
+import PublicExam from './pages/PublicExam';
+import TeacherDashboard from './pages/TeacherDashboard';
+import TeacherObjectives from './pages/TeacherObjectives';
+import TeacherInputGrades from './pages/TeacherInputGrades';
+import TeacherManageGrades from './pages/TeacherManageGrades';
+import TeacherInputAbsensi from './pages/TeacherInputAbsensi';
+import TeacherReports from './pages/TeacherReports';
+import TeacherTaskCheck from './pages/TeacherTaskCheck';
+import TeacherAdminManagement from './pages/TeacherAdminManagement';
+import TeacherExams from './pages/TeacherExams';
+import TeacherExamEditor from './pages/TeacherExamEditor';
+import TeacherSettings from './pages/TeacherSettings';
+import TeacherWeightSettings from './pages/TeacherWeightSettings';
+import TeacherStudents from './pages/TeacherStudents';
+import TeacherVisits from './pages/TeacherVisits';
+import TeacherMaterials from './pages/TeacherMaterials';
+import TeacherJournal from './pages/TeacherJournal';
+import { db } from './services/supabaseMock';
+
+// Higher Order Component for Route Protection
+// Fix: Use React.FC and make children optional to resolve the "Property 'children' is missing" JSX error
+const ProtectedRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
+  const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+  if (!isLoggedIn) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+};
+
+const PlaceholderPage = ({ title }: { title: string }) => (
+  <div className="flex flex-col items-center justify-center min-h-[40vh] md:min-h-[50vh] space-y-2 md:space-y-4 animate-fadeIn px-4 text-center">
+    <div className="bg-slate-200/50 p-3 md:p-4 rounded-full mb-2">
+      <div className="w-8 h-8 md:w-12 md:h-12 border-4 border-slate-300 border-t-emerald-600 rounded-full animate-spin"></div>
+    </div>
+    <h1 className="text-lg md:text-2xl font-bold text-slate-800">{title}</h1>
+    <p className="text-[10px] md:text-sm text-slate-500 max-w-xs">Halaman ini sedang dalam tahap pengembangan konten oleh guru</p>
+  </div>
+);
+
+// Scroll to top on route change
+const ScrollToTop = () => {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+};
+
+// Sesi global: Simpan tracker terakhir guna menghindari pencatatan ganda pada render ganda/cepat React 18
+let lastLoggedPath = '';
+let lastLoggedTime = 0;
+
+const PageTracker: React.FC = () => {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    const path = pathname;
+    
+    // Jangan log halaman guru/admin
+    if (path.startsWith('/guru')) return;
+    
+    // Cegah pencatatan dobel dalam waktu kurang dari 2 detik untuk path yang sama
+    const now = Date.now();
+    if (path === lastLoggedPath && (now - lastLoggedTime) < 2000) {
+      return;
+    }
+    lastLoggedPath = path;
+    lastLoggedTime = now;
+
+    // Mapping path ke label yang ramah
+    let pageLabel = 'Beranda';
+    if (path === '/materi') pageLabel = 'Materi PAI';
+    else if (path === '/absensi') pageLabel = 'Cek Absensi';
+    else if (path === '/nilai') pageLabel = 'Nilai Siswa';
+    else if (path === '/tugas') pageLabel = 'Kirim Tugas';
+    else if (path === '/kerjakan-tugas') pageLabel = 'Kerjakan Soal / Ujian';
+    else if (path === '/profil') pageLabel = 'Profil Guru';
+
+    const lastStudentStr = localStorage.getItem('pai_last_active_student');
+    if (lastStudentStr) {
+      try {
+        const stud = JSON.parse(lastStudentStr);
+        db.logKunjungan(stud.nis, stud.namalengkap, stud.kelas, pageLabel);
+      } catch (e) {
+        db.logKunjungan('Anonim', 'Pengunjung Umum', 'Umum', pageLabel);
+      }
+    } else {
+      db.logKunjungan('Anonim', 'Pengunjung Umum', 'Umum', pageLabel);
+    }
+  }, [pathname]);
+
+  return null;
+};
+
+const App: React.FC = () => {
+  useEffect(() => {
+    // Jalankan sinkronisasi background saat aplikasi dibuka oleh siapa saja (Siswa maupun Guru)
+    db.syncFromGoogleSheets().catch(err => {
+      console.warn("Gagal menyinkronkan data Google Sheets pada startup:", err);
+    });
+  }, []);
+
+  return (
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <ScrollToTop />
+      <PageTracker />
+      <Layout>
+        <Routes>
+          {/* Public Routes */}
+          <Route path="/" element={<Home />} />
+          <Route path="/profil" element={<PublicProfile />} />
+          <Route path="/nilai" element={<PublicGrades />} />
+          <Route path="/absensi" element={<PublicAbsensi />} />
+          <Route path="/tugas" element={<PublicTasks />} />
+          {/* Halaman Ujian Siswa (Sudah bukan Placeholder) */}
+          <Route path="/kerjakan-tugas" element={<PublicExam />} />
+          <Route path="/materi" element={<PublicMaterials />} />
+          
+          {/* Protected Teacher Routes */}
+          <Route path="/guru" element={
+            <ProtectedRoute>
+              <TeacherDashboard />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/tujuanpembelajaran" element={
+            <ProtectedRoute>
+              <TeacherObjectives />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/bobotnilai" element={
+            <ProtectedRoute>
+              <TeacherWeightSettings />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/datasiswa" element={
+            <ProtectedRoute>
+              <TeacherStudents />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/jurnal" element={
+            <ProtectedRoute>
+              <TeacherJournal />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/materi" element={
+            <ProtectedRoute>
+              <TeacherMaterials />
+            </ProtectedRoute>
+          } />
+          {/* Route Baru: Bank Soal & Editor */}
+          <Route path="/guru/ujian" element={
+            <ProtectedRoute>
+              <TeacherExams />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/ujian/edit/:id" element={
+            <ProtectedRoute>
+              <TeacherExamEditor />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/guru/nilai" element={
+            <ProtectedRoute>
+              <TeacherInputGrades />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/Nilai-rapot" element={
+            <ProtectedRoute>
+              <TeacherManageGrades />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/absensi" element={
+            <ProtectedRoute>
+              <TeacherInputAbsensi />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/laporan" element={
+            <ProtectedRoute>
+              <TeacherReports />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/tugas-masuk" element={
+            <ProtectedRoute>
+              <TeacherTaskCheck />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/admin" element={
+            <ProtectedRoute>
+              <TeacherAdminManagement />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/pengaturan" element={
+            <ProtectedRoute>
+              <TeacherSettings />
+            </ProtectedRoute>
+          } />
+          <Route path="/guru/statistik" element={
+            <ProtectedRoute>
+              <TeacherVisits />
+            </ProtectedRoute>
+          } />
+          
+          {/* Catch-all redirect */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Layout>
+    </Router>
+  );
+};
+
+export default App;

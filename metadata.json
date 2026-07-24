@@ -1,0 +1,10 @@
+{
+  "name": "Remix: Aplikasi Pembelajaran PAI_V3_20262027",
+  "description": "Sistem informasi manajemen nilai, absensi, dan materi pembelajaran untuk guru Pendidikan Agama Islam (PAI) kelas 7, 8, dan 9.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
