@@ -847,52 +847,46 @@ const TeacherObjectives: React.FC = () => {
                       {tpRelatedAsms.length === 0 ? (
                         <p className="text-slate-400 text-[10px] italic py-2 pl-1">Belum ada rancangan instrumen penilaian tugas khusus untuk TP ini.</p>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="space-y-2">
                           {tpRelatedAsms.map(asm => (
-                            <div key={asm.id} className="bg-white p-3.5 rounded-2xl border border-slate-100 flex flex-col justify-between hover:border-emerald-200 hover:shadow-md transition duration-200 shadow-sm min-h-[96px]">
-                              <div>
-                                <p className="font-black text-slate-800 text-xs truncate">{asm.name}</p>
+                            <div key={asm.id} className="bg-white p-3.5 rounded-2xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-emerald-200 hover:shadow-sm transition shadow-sm">
+                              <div className="space-y-1 min-w-0 flex-1">
+                                <h4 className="font-bold text-slate-800 text-xs md:text-sm">{asm.name}</h4>
+                                <p className="text-xs text-slate-500 font-normal leading-relaxed break-words">{asm.type}</p>
                               </div>
-                              <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-50">
-                                <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100/50 whitespace-nowrap">
-                                  {asm.type}
-                                </span>
-                                <div className="flex items-center gap-1.5">
-                                  <button 
-                                    onClick={() => navigate(`/guru/nilai`, { 
-                                      state: { 
-                                        prefill: { 
-                                          grade: selectedGrade, 
-                                          semester: selectedSemester, 
-                                          type: (asm.type === 'Praktik' || asm.type === 'Hafalan') ? 'Praktik' : 'Harian',
-                                          tpId: tp.id,
-                                          assessmentId: asm.id
-                                        } 
+                              <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                                <button 
+                                  onClick={() => navigate(`/guru/nilai`, { 
+                                    state: { 
+                                      prefill: { 
+                                        grade: selectedGrade, 
+                                        semester: selectedSemester, 
+                                        type: (asm.type === 'Praktik' || asm.type === 'Hafalan') ? 'Praktik' : 'Harian',
+                                        tpId: tp.id,
+                                        assessmentId: asm.id
                                       } 
-                                    })}
-                                    className="px-2.5 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-100/50 transition flex items-center gap-1 text-[9px] font-black uppercase tracking-wider shadow-sm active:scale-95"
-                                    title="Input Nilai Tugas"
-                                  >
-                                    <Award size={10} />
-                                    <span>Isi Nilai</span>
-                                  </button>
-                                  <div className="flex items-center gap-0.5">
-                                    <button 
-                                      onClick={() => handleEditAsmInitiate(asm)}
-                                      className="text-slate-400 hover:text-blue-600 p-1.5 rounded-lg hover:bg-blue-50 border border-transparent hover:border-blue-100/30 transition active:scale-90"
-                                      title="Edit Tugas"
-                                    >
-                                      <Edit2 size={12} />
-                                    </button>
-                                    <button 
-                                      onClick={() => handleDeleteAssessment(asm.id)}
-                                      className="text-slate-400 hover:text-red-650 p-1.5 rounded-lg hover:bg-red-50 border border-transparent hover:border-red-100/30 transition active:scale-90"
-                                      title="Hapus Tugas"
-                                    >
-                                      <Trash2 size={12} />
-                                    </button>
-                                  </div>
-                                </div>
+                                    } 
+                                  })}
+                                  className="px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-100/60 transition flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider shadow-sm active:scale-95"
+                                  title="Input Nilai Tugas"
+                                >
+                                  <Award size={12} />
+                                  <span>Isi Nilai</span>
+                                </button>
+                                <button 
+                                  onClick={() => handleEditAsmInitiate(asm)}
+                                  className="text-slate-400 hover:text-blue-600 p-2 rounded-xl bg-slate-50 hover:bg-blue-50 border border-slate-100 hover:border-blue-100 transition active:scale-90"
+                                  title="Edit Tugas"
+                                >
+                                  <Edit2 size={13} />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteAssessment(asm.id)}
+                                  className="text-slate-400 hover:text-red-650 p-2 rounded-xl bg-slate-50 hover:bg-red-50 border border-slate-100 hover:border-red-100 transition active:scale-90"
+                                  title="Hapus Tugas"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
                               </div>
                             </div>
                           ))}
