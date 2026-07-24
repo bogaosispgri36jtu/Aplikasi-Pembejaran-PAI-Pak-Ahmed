@@ -1,9 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Save, Calendar, Clock, BookOpen, Loader2, AlertCircle, ArrowLeft, ClipboardList } from 'lucide-react';
+import { Save, Calendar, Clock, BookOpen, Loader2, AlertCircle, ArrowLeft, ClipboardList, Edit3, Trash2, X } from 'lucide-react';
 import { db } from '../services/supabaseMock';
 import { GradeLevel, JurnalHarian } from '../types';
 import Swal from 'sweetalert2';
+
+const formatTanggalIndo = (dateStr: string) => {
+  if (!dateStr) return '-';
+  const months = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktobor', 'November', 'Desember'
+  ];
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    const year = parts[0];
+    const monthIdx = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    const monthName = months[monthIdx] || parts[1];
+    const dayFormatted = day < 10 ? `0${day}` : `${day}`;
+    return `${dayFormatted}-${monthName}-${year}`;
+  }
+  return dateStr;
+};
 
 const TeacherJournal: React.FC = () => {
   const navigate = useNavigate();
@@ -15,6 +33,7 @@ const TeacherJournal: React.FC = () => {
   const [tanggal, setTanggal] = useState('');
   const [jamMengajar, setJamMengajar] = useState('2');
   const [deskripsi, setDeskripsi] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
   
   // List of history journals
   const [journals, setJournals] = useState<JurnalHarian[]>([]);
@@ -25,7 +44,9 @@ const TeacherJournal: React.FC = () => {
   useEffect(() => {
     db.getAvailableKelas(grade).then((data: string[]) => {
       setAvailableKelas(data);
-      setSelectedKelas(data[0] || '');
+      if (!editingId) {
+        setSelectedKelas(data[0] || '');
+      }
     });
   }, [grade]);
 
@@ -47,6 +68,67 @@ const TeacherJournal: React.FC = () => {
   useEffect(() => {
     fetchJournals();
   }, []);
+
+  const handleEditClick = (journal: JurnalHarian) => {
+    setEditingId(journal.id);
+    setTanggal(journal.tanggal);
+    setSelectedKelas(journal.kelas);
+    setJamMengajar(journal.jam_mengajar || '2');
+    setDeskripsi(journal.deskripsi);
+    
+    if (journal.kelas && journal.kelas.length > 0) {
+      const g = journal.kelas.charAt(0) as GradeLevel;
+      if (['7', '8', '9'].includes(g)) {
+        setGrade(g);
+      }
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setTanggal('');
+    setDeskripsi('');
+  };
+
+  const handleDelete = async (journal: JurnalHarian) => {
+    const result = await Swal.fire({
+      title: 'Hapus Jurnal Harian?',
+      text: `Yakin ingin menghapus jurnal Kelas ${journal.kelas} (${formatTanggalIndo(journal.tanggal)})?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: 'Ya, Hapus',
+      cancelButtonText: 'Batal',
+      heightAuto: false
+    });
+
+    if (!result.isConfirmed) return;
+
+    try {
+      await db.deleteJurnalHarian(journal.id);
+      Swal.fire({
+        icon: 'success',
+        title: 'Berhasil Dihapus',
+        text: 'Data jurnal harian berhasil dihapus.',
+        timer: 1500,
+        showConfirmButton: false,
+        heightAuto: false
+      });
+      if (editingId === journal.id) {
+        handleCancelEdit();
+      }
+      fetchJournals();
+    } catch (err) {
+      console.error("Gagal menghapus jurnal:", err);
+      Swal.fire({
+        icon: 'error',
+        title: 'Gagal',
+        text: 'Gagal menghapus data jurnal.',
+        heightAuto: false
+      });
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,13 +157,14 @@ const TeacherJournal: React.FC = () => {
       return;
     }
 
+    const actionText = editingId ? 'Perbarui Jurnal Harian?' : 'Simpan Jurnal Harian?';
     const result = await Swal.fire({
-      title: 'Simpan Jurnal Harian?',
-      text: `Menyimpan jurnal untuk Kelas ${selectedKelas}, ${jamMengajar} Jam`,
+      title: actionText,
+      text: `${editingId ? 'Memperbarui' : 'Menyimpan'} jurnal untuk Kelas ${selectedKelas}, ${jamMengajar} Jam (${formatTanggalIndo(tanggal)})`,
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: '#059669',
-      confirmButtonText: 'Ya, Simpan',
+      confirmButtonText: editingId ? 'Ya, Perbarui' : 'Ya, Simpan',
       cancelButtonText: 'Batal',
       heightAuto: false
     });
@@ -90,24 +173,42 @@ const TeacherJournal: React.FC = () => {
 
     setSaving(true);
     try {
-      await db.addJurnalHarian({
-        tanggal,
-        kelas: selectedKelas,
-        jam_mengajar: jamMengajar,
-        deskripsi: deskripsi.trim()
-      });
+      if (editingId) {
+        await db.updateJurnalHarian(editingId, {
+          tanggal,
+          kelas: selectedKelas,
+          jam_mengajar: jamMengajar,
+          deskripsi: deskripsi.trim()
+        });
+        Swal.fire({
+          icon: 'success',
+          title: 'Alhamdulillah',
+          text: 'Jurnal harian berhasil diperbarui!',
+          timer: 2000,
+          showConfirmButton: false,
+          heightAuto: false
+        });
+        handleCancelEdit();
+      } else {
+        await db.addJurnalHarian({
+          tanggal,
+          kelas: selectedKelas,
+          jam_mengajar: jamMengajar,
+          deskripsi: deskripsi.trim()
+        });
 
-      // Reset form
-      setDeskripsi('');
-      
-      Swal.fire({
-        icon: 'success',
-        title: 'Alhamdulillah',
-        text: 'Jurnal harian berhasil disimpan!',
-        timer: 2000,
-        showConfirmButton: false,
-        heightAuto: false
-      });
+        // Reset form
+        setDeskripsi('');
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Alhamdulillah',
+          text: 'Jurnal harian berhasil disimpan!',
+          timer: 2000,
+          showConfirmButton: false,
+          heightAuto: false
+        });
+      }
 
       // Reload history
       fetchJournals();
@@ -149,10 +250,21 @@ const TeacherJournal: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-start">
         {/* Input Form Column */}
         <form onSubmit={handleSave} className="md:col-span-1 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
-          <h2 className="text-xs md:text-sm font-black text-slate-800 uppercase tracking-wider border-b pb-2 mb-2 flex items-center gap-1.5">
-            <ClipboardList size={16} className="text-emerald-600" />
-            Isi Jurnal Baru
-          </h2>
+          <div className="flex items-center justify-between border-b pb-2 mb-2">
+            <h2 className="text-xs md:text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <ClipboardList size={16} className="text-emerald-600" />
+              {editingId ? 'Edit Jurnal' : 'Isi Jurnal Baru'}
+            </h2>
+            {editingId && (
+              <button 
+                type="button" 
+                onClick={handleCancelEdit} 
+                className="text-[9px] font-bold text-slate-500 hover:text-red-600 flex items-center gap-0.5 bg-slate-100 px-2 py-0.5 rounded-lg"
+              >
+                <X size={12} /> Batal
+              </button>
+            )}
+          </div>
 
           {/* Tanggal */}
           <div className="space-y-1">
@@ -238,6 +350,8 @@ const TeacherJournal: React.FC = () => {
           >
             {saving ? (
               <><Loader2 size={14} className="animate-spin" /> Menyimpan...</>
+            ) : editingId ? (
+              <><Save size={14} /> Simpan Perubahan</>
             ) : (
               <><Save size={14} /> Simpan Jurnal</>
             )}
@@ -266,15 +380,36 @@ const TeacherJournal: React.FC = () => {
                   <div className="flex items-center justify-between gap-2 text-[10px] font-bold">
                     <span className="text-slate-700 flex items-center gap-1">
                       <Calendar size={12} className="text-emerald-600" />
-                      {journal.tanggal}
+                      {formatTanggalIndo(journal.tanggal)}
                     </span>
-                    <span className="bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">
-                      Kelas {journal.kelas}
-                    </span>
-                    <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[8px] font-black uppercase flex items-center gap-0.5">
-                      <Clock size={10} />
-                      {journal.jam_mengajar} Jam
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">
+                        Kelas {journal.kelas}
+                      </span>
+                      <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[8px] font-black uppercase flex items-center gap-0.5">
+                        <Clock size={10} />
+                        {journal.jam_mengajar} Jam
+                      </span>
+                      {/* Action Icons Edit & Hapus */}
+                      <div className="flex items-center gap-1 ml-1 border-l border-slate-200 pl-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleEditClick(journal)}
+                          className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                          title="Edit Jurnal"
+                        >
+                          <Edit3 size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(journal)}
+                          className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                          title="Hapus Jurnal"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <p className="text-[11px] md:text-xs text-slate-600 leading-relaxed mt-1 font-normal whitespace-pre-wrap">
                     {journal.deskripsi}

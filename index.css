@@ -4,7 +4,8 @@
 
 @layer base {
   body {
-    @apply antialiased;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
+    @apply antialiased text-slate-800;
   }
   
   /* Hide standard browser password reveal icons */
@@ -13,6 +14,34 @@
     display: none !important;
     width: 0 !important;
     height: 0 !important;
+  }
+}
+
+/* Custom scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ==========================================================================
+   GLOBAL RESPONSIVE SCALING FOR TABLET & MOBILE (HP)
+   ========================================================================== */
+@media (max-width: 1024px) {
+  html {
+    font-size: 14px;
+  }
+  body, #root {
+    overflow-x: hidden;
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  html {
+    font-size: 13.5px;
   }
 }
 

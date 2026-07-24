@@ -30,7 +30,7 @@ const PublicGrades: React.FC = () => {
   const toggleTp = (id: string) => {
     setOpenTps(prev => ({
       ...prev,
-      [id]: !prev[id]
+      [id]: prev[id] === false ? true : false
     }));
   };
 
@@ -433,6 +433,8 @@ const PublicGrades: React.FC = () => {
                   const tpScore = getTpScore(tp.id);
                   const relatedAsms = localAsms.filter((a: any) => String(a.tpId) === String(tp.id));
 
+                  const isTpOpen = openTps[tp.id] !== false;
+
                   return (
                     <div key={tp.id} className="bg-slate-50/50 p-4 rounded-3xl border border-slate-100/70 space-y-3">
                       {/* TP Header */}
@@ -454,13 +456,13 @@ const PublicGrades: React.FC = () => {
                             RATA-RATA: {tpScore !== null ? tpScore : '-'}
                           </div>
                           <div className="p-1 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors">
-                            {openTps[tp.id] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            {isTpOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </div>
                         </div>
                       </div>
 
                       {/* Assessments list under this TP */}
-                      {openTps[tp.id] && (
+                      {isTpOpen && (
                         <div className="space-y-2 pt-2 border-t border-slate-100 pl-1 md:pl-2 animate-fadeIn">
                           {relatedAsms.length > 0 ? (
                             relatedAsms.map((asm: any) => {

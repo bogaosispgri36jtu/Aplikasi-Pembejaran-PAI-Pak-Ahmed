@@ -31,6 +31,15 @@ const TeacherInputAbsensi: React.FC = () => {
         const records = await db.getAttendanceByKelas(selectedKelas);
         const exists = records.some((rec: any) => rec.date === date);
         setAlreadyExists(exists);
+        if (exists) {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Absensi Ganda Terdeteksi',
+            text: `Absensi untuk kelas ${selectedKelas} pada tanggal ${date} sudah pernah di-input sebelumnya! Silakan pilih tanggal atau kelas lain.`,
+            confirmButtonColor: '#d97706',
+            heightAuto: false
+          });
+        }
       } catch (err) {
         console.error("Gagal memeriksa absensi ganda:", err);
       }
@@ -208,8 +217,8 @@ const TeacherInputAbsensi: React.FC = () => {
         )}
 
         <div className="border border-slate-100 rounded-xl overflow-hidden bg-white shadow-sm">
-          <div className="bg-slate-50 p-2 md:p-3 border-b border-slate-100 flex justify-between items-center"><h3 className="text-[9px] md:text-xs font-bold text-slate-700 uppercase tracking-tight">Daftar Siswa {selectedKelas} (Maks 10 Baris Tampil, Sisanya Gulir)</h3>{loading && <Loader2 size={12} className="animate-spin text-amber-600" />}</div>
-          <div className="divide-y divide-slate-50 max-h-[380px] overflow-y-auto">
+          <div className="bg-slate-50 p-2 md:p-3 border-b border-slate-100 flex justify-between items-center"><h3 className="text-[9px] md:text-xs font-bold text-slate-700 uppercase tracking-tight">Daftar Siswa {selectedKelas}</h3>{loading && <Loader2 size={12} className="animate-spin text-amber-600" />}</div>
+          <div className="divide-y divide-slate-50 max-h-[620px] overflow-y-auto">
             {students.length > 0 ? students.map((s, idx) => (
               <div key={s.id || s.nis} className="py-1 px-2 md:py-1.5 md:px-3 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors">
                 <div className="flex items-center gap-2 overflow-hidden"><div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-400 border">{idx + 1}</div><p className="text-[10px] md:text-xs font-normal text-slate-800 truncate uppercase">{s.namalengkap}</p></div>

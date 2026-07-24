@@ -1863,6 +1863,27 @@ class DatabaseService {
 
     return newEntry;
   }
+
+  async updateJurnalHarian(id: string, journal: Partial<Omit<JurnalHarian, 'id' | 'created_at'>>): Promise<void> {
+    const list = this.getLocalTable<JurnalHarian>('JurnalHarian') || [];
+    const idx = list.findIndex(j => j.id === id);
+    if (idx > -1) {
+      list[idx] = { ...list[idx], ...journal };
+      this.setLocalTable('JurnalHarian', list);
+      this.syncTableToGoogleSheets('JurnalHarian').catch(err => {
+        console.warn("Gagal sinkronisasi JurnalHarian ke Google Sheets:", err);
+      });
+    }
+  }
+
+  async deleteJurnalHarian(id: string): Promise<void> {
+    let list = this.getLocalTable<JurnalHarian>('JurnalHarian') || [];
+    list = list.filter(j => j.id !== id);
+    this.setLocalTable('JurnalHarian', list);
+    this.syncTableToGoogleSheets('JurnalHarian').catch(err => {
+      console.warn("Gagal sinkronisasi JurnalHarian ke Google Sheets:", err);
+    });
+  }
 }
 
 export const db = new DatabaseService();

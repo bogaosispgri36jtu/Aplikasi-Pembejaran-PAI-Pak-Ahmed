@@ -156,9 +156,9 @@ const TeacherWeightSettings: React.FC = () => {
   const totalCalculated = Number(weights.kehadiran) + Number(weights.sikap) + Number(weights.harian) + Number(weights.sts) + Number(weights.sas);
 
   // SVG Ring calculation
-  const radius = 50;
+  const radius = 68;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (Math.min(100, totalCalculated) / 100) * circumference;
+  const strokeDashoffset = circumference - (Math.min(100, Math.max(0, totalCalculated)) / 100) * circumference;
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn pb-24 px-2 md:px-0 font-sans" id="teacher-weight-settings-container">
@@ -528,30 +528,33 @@ const TeacherWeightSettings: React.FC = () => {
         <div className="lg:col-span-5 space-y-6">
           
           {/* CARD 1: DYNAMIC WHEEL STATS */}
-          <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
-            <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">
-              Live Tracker Akumulasi
-            </h3>
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+            
+            {/* Header Badge */}
+            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-50 border border-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest">
+              <span className={`w-2 h-2 rounded-full ${totalCalculated === 100 ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500 animate-ping'}`} />
+              <span>Live Tracker Akumulasi</span>
+            </div>
 
-            {/* CIRCULAR PROGRESS */}
-            <div className="relative flex items-center justify-center">
-              <svg className="w-36 h-36 transform -rotate-90">
+            {/* CIRCULAR PROGRESS GAUGE */}
+            <div className="relative flex items-center justify-center my-2">
+              <svg viewBox="0 0 192 192" className="w-40 h-40 sm:w-44 sm:h-44 transform -rotate-90">
                 {/* Background Ring */}
                 <circle 
-                  cx="72" 
-                  cy="72" 
+                  cx="96" 
+                  cy="96" 
                   r={radius} 
                   stroke="#f1f5f9" 
-                  strokeWidth="10" 
+                  strokeWidth="12" 
                   fill="transparent" 
                 />
                 {/* Filled Ring */}
                 <circle 
-                  cx="72" 
-                  cy="72" 
+                  cx="96" 
+                  cy="96" 
                   r={radius} 
-                  stroke={totalCalculated === 100 ? '#059669' : '#e11d48'} 
-                  strokeWidth="10" 
+                  stroke={totalCalculated === 100 ? '#059669' : totalCalculated > 100 ? '#e11d48' : '#f59e0b'} 
+                  strokeWidth="12" 
                   fill="transparent" 
                   strokeDasharray={circumference}
                   strokeDashoffset={strokeDashoffset}
@@ -559,27 +562,56 @@ const TeacherWeightSettings: React.FC = () => {
                   className="transition-all duration-500 ease-out"
                 />
               </svg>
-              {/* Inner Label */}
-              <div className="absolute flex flex-col items-center">
-                <span className="text-2xl font-black text-slate-800">{totalCalculated}%</span>
-                <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">
-                  Terakumulasi
+              {/* Inner Label - Centered with precise spacing */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none select-none">
+                <span className="text-2xl sm:text-3xl font-extrabold text-slate-800 leading-none tracking-tight">
+                  {totalCalculated}%
+                </span>
+                <span className="text-[8px] sm:text-[9px] font-extrabold uppercase text-slate-400 tracking-widest mt-1.5 leading-tight">
+                  TERAKUMULASI
                 </span>
               </div>
             </div>
 
             {/* BALANCE ALERT STATUS */}
             {totalCalculated === 100 ? (
-              <div className="bg-emerald-50 text-emerald-800 border border-emerald-100 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2">
-                <CheckCircle2 size={16} className="text-emerald-600" />
+              <div className="w-full bg-emerald-50/90 text-emerald-800 border border-emerald-200/80 px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs">
+                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
                 <span>Sempurna! Total Bobot Tepat 100%</span>
               </div>
             ) : (
-              <div className="bg-rose-50 text-rose-800 border border-rose-100 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 animate-pulse">
-                <AlertTriangle size={16} className="text-rose-600" />
-                <span>Selisih: {100 - totalCalculated}% (Sisa: {totalCalculated}%)</span>
+              <div className="w-full bg-rose-50/90 text-rose-800 border border-rose-200/80 px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs animate-pulse">
+                <AlertTriangle size={16} className="text-rose-600 shrink-0" />
+                <span>
+                  {totalCalculated > 100 
+                    ? `Kelebihan: +${totalCalculated - 100}% (Total: ${totalCalculated}%)` 
+                    : `Kurang: -${100 - totalCalculated}% (Sisa: ${totalCalculated}%)`}
+                </span>
               </div>
             )}
+
+            {/* MINI COMPONENT BREAKDOWN BAR */}
+            <div className="w-full pt-2 border-t border-slate-100/80 space-y-2">
+              <div className="flex justify-between items-center text-[9.5px] font-extrabold uppercase text-slate-400 tracking-wider">
+                <span>Rincian Komponen</span>
+                <span>{totalCalculated}% / 100%</span>
+              </div>
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                <div style={{ width: `${Math.min(100, weights.kehadiran)}%` }} className="bg-cyan-500 h-full transition-all duration-300" title="Kehadiran" />
+                <div style={{ width: `${Math.min(100, weights.sikap)}%` }} className="bg-purple-500 h-full transition-all duration-300" title="Sikap" />
+                <div style={{ width: `${Math.min(100, weights.harian)}%` }} className="bg-emerald-500 h-full transition-all duration-300" title="Tugas TP" />
+                <div style={{ width: `${Math.min(100, weights.sts)}%` }} className="bg-rose-500 h-full transition-all duration-300" title="STS" />
+                <div style={{ width: `${Math.min(100, weights.sas)}%` }} className="bg-indigo-500 h-full transition-all duration-300" title="SAS" />
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[8.5px] font-bold text-slate-500 pt-1">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-500 inline-block"/>Presensi ({weights.kehadiran}%)</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500 inline-block"/>Sikap ({weights.sikap}%)</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/>Tugas ({weights.harian}%)</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block"/>STS ({weights.sts}%)</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-500 inline-block"/>SAS ({weights.sas}%)</span>
+              </div>
+            </div>
+
           </div>
 
           {/* CARD 2: KETENTUAN DAN PERSYARATAN */}

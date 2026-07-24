@@ -220,24 +220,24 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-[80px] md:pb-0 overflow-x-hidden">
-      <header className="bg-white border-b border-slate-100 sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2">
+    <div className="min-h-screen bg-slate-50 pb-[75px] lg:pb-0 overflow-x-hidden">
+      <header className="bg-white border-b border-slate-100 sticky top-0 z-40 shadow-xs">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 h-14 md:h-16 flex items-center justify-between gap-2 overflow-hidden">
+          <Link to="/" className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <div className="bg-emerald-600 p-1.5 rounded-lg text-white shrink-0">
-              <BookOpen size={20} />
+              <BookOpen size={18} className="md:w-5 md:h-5" />
             </div>
-            <span className="font-bold text-[13px] sm:text-lg text-slate-800 whitespace-nowrap">Pend. Agama Islam</span>
+            <span className="font-extrabold text-xs sm:text-sm md:text-base text-slate-800 whitespace-nowrap">Pend. Agama Islam</span>
           </Link>
           
-          <nav className="hidden md:flex items-center gap-2 lg:gap-4">
+          <nav className="hidden md:flex items-center gap-0.5 lg:gap-1.5 xl:gap-3 overflow-x-auto no-scrollbar py-1 shrink min-w-0">
             {navLinks.map((link) => (
               <Link
                 key={link.path}
                 to={link.path}
-                className={`text-[10px] lg:text-[11px] font-bold transition-all px-2 py-1 rounded-md whitespace-nowrap ${
+                className={`text-[9.5px] lg:text-[10.5px] xl:text-[11px] font-bold transition-all px-1.5 lg:px-2 py-1 rounded-md whitespace-nowrap shrink-0 ${
                   location.pathname === link.path 
-                  ? 'bg-emerald-50 text-emerald-700' 
+                  ? 'bg-emerald-50 text-emerald-700 font-extrabold' 
                   : 'text-slate-500 hover:text-emerald-600'
                 }`}
               >
@@ -246,10 +246,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             ))}
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button 
               onClick={() => setShowLoginModal(true)}
-              className="bg-blue-600 text-white px-3 sm:px-4 py-2 rounded-lg text-[10px] sm:text-xs font-bold hover:bg-blue-900 transition-all"
+              className="bg-blue-600 text-white px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg text-[9.5px] sm:text-xs font-bold hover:bg-blue-900 active:scale-95 transition-all whitespace-nowrap shadow-xs"
             >
               Masuk
             </button>
@@ -257,8 +257,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       </header>
 
-      <main className="p-3 md:p-8">
-        <div className="max-w-5xl mx-auto">
+      <main className="p-2.5 sm:p-4 md:p-6">
+        <div className="max-w-5xl mx-auto w-full">
           {children}
         </div>
       </main>
