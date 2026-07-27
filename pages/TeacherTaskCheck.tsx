@@ -5,6 +5,8 @@ import { db } from '../services/supabaseMock';
 import { TaskSubmission, GradeLevel } from '../types';
 import Swal from 'sweetalert2';
 import { verifySecurityToken } from '../utils/security';
+import { firestore } from '../services/firebase';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 const TeacherTaskCheck: React.FC = () => {
   const navigate = useNavigate();
@@ -34,6 +36,69 @@ const TeacherTaskCheck: React.FC = () => {
   const [filterSemester, setFilterSemester] = useState<string>('all'); // Sekarang untuk KEDUA Tab
   
   const [availableClasses, setAvailableClasses] = useState<string[]>([]);
+
+  // --- STATE NILAI (SUDAH / BELUM) ---
+  const [gradedStatusMap, setGradedStatusMap] = useState<Record<string, 'sudah' | 'belum'>>(() => {
+    try {
+      const saved = localStorage.getItem('teacher_task_graded_status');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  // Sync real-time dari Firestore agar otomatis tersimpan dan sama di semua device (HP, Tablet, Laptop)
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    try {
+      const docRef = doc(firestore, 'teacher_settings', 'task_graded_status');
+      unsubscribe = onSnapshot(docRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const remoteData = snapshot.data() as Record<string, 'sudah' | 'belum'>;
+          if (remoteData) {
+            setGradedStatusMap((prev) => {
+              const merged = { ...prev, ...remoteData };
+              try {
+                localStorage.setItem('teacher_task_graded_status', JSON.stringify(merged));
+              } catch (err) {
+                console.error(err);
+              }
+              return merged;
+            });
+          }
+        }
+      }, (err) => {
+        console.warn('Firestore task_graded_status onSnapshot warning:', err);
+      });
+    } catch (e) {
+      console.warn('Gagal menginisialisasi listener Firestore task_graded_status:', e);
+    }
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  const handleToggleGraded = async (id: string, status: 'sudah' | 'belum') => {
+    // 1. Update state lokal & localStorage terlebih dahulu untuk respon UI instan
+    setGradedStatusMap((prev) => {
+      const updated = { ...prev, [id]: status };
+      try {
+        localStorage.setItem('teacher_task_graded_status', JSON.stringify(updated));
+      } catch (e) {
+        console.error(e);
+      }
+      return updated;
+    });
+
+    // 2. Simpan secara otomatis ke Firestore agar tersinkronisasi antar-perangkat (Laptop <-> Tablet <-> HP)
+    try {
+      const docRef = doc(firestore, 'teacher_settings', 'task_graded_status');
+      await setDoc(docRef, { [id]: status }, { merge: true });
+    } catch (e) {
+      console.error('Gagal menyimpan status centang nilai ke Firestore:', e);
+    }
+  };
 
   // Load Data saat Tab atau Filter berubah
   useEffect(() => {
@@ -557,60 +622,102 @@ const TeacherTaskCheck: React.FC = () => {
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Siswa</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest hidden md:table-cell">Judul</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipe</th>
+                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">NILAI</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {filteredData.map((task: TaskSubmission, index: number) => (
-                      <tr key={task.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-4 py-3 text-center align-middle font-bold text-slate-500 text-[10px] md:text-xs">
-                            {index + 1}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-slate-800 text-[11px] md:text-sm leading-tight">{task.student_name}</span>
-                            <span className="text-[8px] md:text-[10px] text-slate-400 uppercase font-black tracking-tighter">Kelas {task.kelas}</span>
-                            {/* Mobile Task Name */}
-                            <span className="md:hidden text-[9px] text-slate-500 mt-1 truncate max-w-[120px]">{task.task_name}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 hidden md:table-cell">
-                          <span className="text-sm font-medium text-slate-600 truncate max-w-[150px] inline-block">{task.task_name}</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          {task.submission_type === 'link' ? (
-                            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-blue-50 text-blue-600 text-[8px] md:text-[10px] font-black border border-blue-100">
-                              <LinkIcon size={10} /> Link
+                    {filteredData.map((task: TaskSubmission, index: number) => {
+                      const isSudah = gradedStatusMap[task.id] === 'sudah';
+                      return (
+                        <tr 
+                          key={task.id} 
+                          className={`transition-colors border-b ${
+                            isSudah 
+                              ? 'bg-red-100/90 text-red-950 border-red-200 hover:bg-red-200/80' 
+                              : 'hover:bg-slate-50/50 border-slate-50'
+                          }`}
+                        >
+                          <td className={`px-4 py-3 text-center align-middle font-bold text-[10px] md:text-xs ${isSudah ? 'text-red-900' : 'text-slate-500'}`}>
+                              {index + 1}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col">
+                              <span className={`font-bold text-[11px] md:text-sm leading-tight ${isSudah ? 'text-red-950' : 'text-slate-800'}`}>{task.student_name}</span>
+                              <span className={`text-[8px] md:text-[10px] uppercase font-black tracking-tighter ${isSudah ? 'text-red-700' : 'text-slate-400'}`}>Kelas {task.kelas}</span>
+                              {/* Mobile Task Name */}
+                              <span className={`md:hidden text-[9px] mt-1 truncate max-w-[120px] ${isSudah ? 'text-red-900 font-medium' : 'text-slate-500'}`}>{task.task_name}</span>
                             </div>
-                          ) : (
-                            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-purple-50 text-purple-600 text-[8px] md:text-[10px] font-black border border-purple-100">
-                              <ImageIcon size={10} /> Foto
+                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell">
+                            <span className={`text-sm font-medium truncate max-w-[150px] inline-block ${isSudah ? 'text-red-950' : 'text-slate-600'}`}>{task.task_name}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            {task.submission_type === 'link' ? (
+                              <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-blue-50 text-blue-600 text-[8px] md:text-[10px] font-black border border-blue-100">
+                                <LinkIcon size={10} /> Link
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-purple-50 text-purple-600 text-[8px] md:text-[10px] font-black border border-purple-100">
+                                <ImageIcon size={10} /> Foto
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-center align-middle">
+                            <div className="flex items-center justify-center gap-2 whitespace-nowrap">
+                              <label className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] md:text-xs font-bold cursor-pointer transition-all select-none ${
+                                isSudah
+                                  ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={isSudah}
+                                  onChange={() => handleToggleGraded(task.id, 'sudah')}
+                                  className="w-3.5 h-3.5 accent-red-600 cursor-pointer rounded"
+                                />
+                                <span>Sudah</span>
+                              </label>
+
+                              <label className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] md:text-xs font-bold cursor-pointer transition-all select-none ${
+                                !isSudah
+                                  ? 'bg-slate-200 text-slate-800 border-slate-300'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={!isSudah}
+                                  onChange={() => handleToggleGraded(task.id, 'belum')}
+                                  className="w-3.5 h-3.5 accent-slate-600 cursor-pointer rounded"
+                                />
+                                <span>Belum</span>
+                              </label>
                             </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-center align-middle">
-                          {/* REVISI AKSI: TAMBAH TOMBOL HAPUS */}
-                          <div className="flex items-center justify-center gap-2">
-                              <button
-                                onClick={() => viewContent(task)}
-                                className="bg-slate-900 text-white px-2.5 py-2 md:px-4 md:py-2 rounded-lg md:rounded-xl text-[9px] md:text-[10px] font-bold hover:bg-purple-600 transition-all active:scale-95 flex items-center gap-1.5"
-                              >
-                                {task.submission_type === 'link' ? <ExternalLink size={10} /> : <Search size={10} />}
-                                <span className="hidden md:inline">Lihat Konten</span>
-                                <span className="md:hidden">Cek</span>
-                              </button>
-                              
-                              <button
-                                onClick={() => handleDeleteTask(task)}
-                                className="bg-red-50 text-red-500 p-2 md:p-2.5 rounded-lg md:rounded-xl hover:bg-red-600 hover:text-white transition-all active:scale-95 border border-red-100"
-                                title="Hapus Tugas"
-                              >
-                                <Trash2 size={14} className="md:w-3.5 md:h-3.5" />
-                              </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="px-4 py-3 text-center align-middle">
+                            {/* REVISI AKSI: TAMBAH TOMBOL HAPUS */}
+                            <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => viewContent(task)}
+                                  className="bg-slate-900 text-white px-2.5 py-2 md:px-4 md:py-2 rounded-lg md:rounded-xl text-[9px] md:text-[10px] font-bold hover:bg-purple-600 transition-all active:scale-95 flex items-center gap-1.5"
+                                >
+                                  {task.submission_type === 'link' ? <ExternalLink size={10} /> : <Search size={10} />}
+                                  <span className="hidden md:inline">Lihat Konten</span>
+                                  <span className="md:hidden">Cek</span>
+                                </button>
+                                
+                                <button
+                                  onClick={() => handleDeleteTask(task)}
+                                  className="bg-red-50 text-red-500 p-2 md:p-2.5 rounded-lg md:rounded-xl hover:bg-red-600 hover:text-white transition-all active:scale-95 border border-red-100"
+                                  title="Hapus Tugas"
+                                >
+                                  <Trash2 size={14} className="md:w-3.5 md:h-3.5" />
+                                </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
             ) : (
@@ -621,67 +728,109 @@ const TeacherTaskCheck: React.FC = () => {
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center w-12">NO</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Siswa</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest hidden md:table-cell">Nama Tugas</th>
-                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Nilai</th>
+                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Skor</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Waktu</th>
+                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">NILAI</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Hapus</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {filteredData.map((res: any, index: number) => (
-                      <tr key={res.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-4 py-3 text-center align-middle font-bold text-slate-500 text-[10px] md:text-xs">
-                            {index + 1}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-slate-800 text-[11px] md:text-sm leading-tight">{res.student_name}</span>
-                            <span className="text-[8px] md:text-[10px] text-slate-400 uppercase font-black tracking-tighter">Kelas {res.student_class}</span>
-                            
-                            {/* REVISI: INFO TAMBAHAN KHUSUS MOBILE (DI BAWAH KELAS) */}
-                            <div className="block md:hidden mt-1.5 pt-1.5 border-t border-slate-100">
-                               <span className="text-[10px] font-bold text-slate-700 block leading-tight">{res.ujian?.title || '-'}</span>
-                               <span className="text-[9px] font-bold text-emerald-600 uppercase">{res.ujian?.category} • Sem {res.semester}</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 hidden md:table-cell">
-                          <span className="text-sm font-medium text-slate-600">{res.ujian?.title || '-'}</span>
-                          <span className="block text-[10px] text-slate-400 uppercase font-bold">{res.ujian?.category} • Sem {res.semester}</span>
-                        </td>
-                        <td className="px-4 py-3 text-center align-top md:align-middle">
-                           <span className={`inline-block w-8 py-1 rounded-lg font-black text-[10px] md:text-xs ${res.score >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                              {res.score}
-                           </span>
-                        </td>
-                        <td className="px-4 py-3 align-top md:align-middle">
-                           <div className="flex flex-col text-[10px] md:text-xs text-slate-500">
-                              <span className="font-bold">{new Date(res.submitted_at).toLocaleDateString('id-ID')}</span>
-                              <span className="flex items-center gap-1 text-[9px]"><Clock size={10}/> {new Date(res.submitted_at).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})} WIB</span>
-                              {/* REVISI: MENAMPILKAN LAMA PENGERJAAN RIIL */}
-                              <span className="text-[9px] text-emerald-600 font-bold mt-1 block">
-                                  Pengerjaan: {calculateRealDuration(res.started_at, res.submitted_at)}
-                              </span>
+                    {filteredData.map((res: any, index: number) => {
+                      const isSudah = gradedStatusMap[res.id] === 'sudah';
+                      return (
+                        <tr 
+                          key={res.id} 
+                          className={`transition-colors border-b ${
+                            isSudah 
+                              ? 'bg-red-100/90 text-red-950 border-red-200 hover:bg-red-200/80' 
+                              : 'hover:bg-slate-50/50 border-slate-50'
+                          }`}
+                        >
+                          <td className={`px-4 py-3 text-center align-middle font-bold text-[10px] md:text-xs ${isSudah ? 'text-red-900' : 'text-slate-500'}`}>
+                              {index + 1}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col">
+                              <span className={`font-bold text-[11px] md:text-sm leading-tight ${isSudah ? 'text-red-950' : 'text-slate-800'}`}>{res.student_name}</span>
+                              <span className={`text-[8px] md:text-[10px] uppercase font-black tracking-tighter ${isSudah ? 'text-red-800' : 'text-slate-400'}`}>Kelas {res.student_class}</span>
                               
-                              {/* BARU: MENAMPILKAN INDIKATOR PELANGGARAN JIKA ADA */}
-                              {res.violation_count > 0 && (
-                                  <span className="text-[9px] text-red-600 font-bold mt-1 bg-red-50 px-1.5 py-0.5 rounded-md border border-red-100 w-fit flex items-center gap-1">
-                                     <ShieldAlert size={10} />
-                                     Pelanggaran: {res.violation_count}x
-                                  </span>
-                              )}
-                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-center align-top md:align-middle">
-                          <button
-                            onClick={() => handleDeleteResult(res.id, res.student_name)}
-                            className="bg-red-50 text-red-500 p-2 rounded-lg hover:bg-red-600 hover:text-white transition-all active:scale-95"
-                            title="Hapus Hasil (Siswa bisa ujian ulang)"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                              {/* REVISI: INFO TAMBAHAN KHUSUS MOBILE (DI BAWAH KELAS) */}
+                              <div className="block md:hidden mt-1.5 pt-1.5 border-t border-slate-100">
+                                 <span className={`text-[10px] font-bold block leading-tight ${isSudah ? 'text-red-900' : 'text-slate-700'}`}>{res.ujian?.title || '-'}</span>
+                                 <span className={`text-[9px] font-bold uppercase ${isSudah ? 'text-red-800' : 'text-emerald-600'}`}>{res.ujian?.category} • Sem {res.semester}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell">
+                            <span className={`text-sm font-medium ${isSudah ? 'text-red-950' : 'text-slate-600'}`}>{res.ujian?.title || '-'}</span>
+                            <span className={`block text-[10px] uppercase font-bold ${isSudah ? 'text-red-800' : 'text-slate-400'}`}>{res.ujian?.category} • Sem {res.semester}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center align-top md:align-middle">
+                             <span className={`inline-block w-8 py-1 rounded-lg font-black text-[10px] md:text-xs ${res.score >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                                {res.score}
+                             </span>
+                          </td>
+                          <td className="px-4 py-3 align-top md:align-middle">
+                             <div className={`flex flex-col text-[10px] md:text-xs ${isSudah ? 'text-red-900' : 'text-slate-500'}`}>
+                                <span className="font-bold">{new Date(res.submitted_at).toLocaleDateString('id-ID')}</span>
+                                <span className="flex items-center gap-1 text-[9px]"><Clock size={10}/> {new Date(res.submitted_at).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})} WIB</span>
+                                {/* REVISI: MENAMPILKAN LAMA PENGERJAAN RIIL */}
+                                <span className={`text-[9px] font-bold mt-1 block ${isSudah ? 'text-red-800' : 'text-emerald-600'}`}>
+                                    Pengerjaan: {calculateRealDuration(res.started_at, res.submitted_at)}
+                                </span>
+                                
+                                {/* BARU: MENAMPILKAN INDIKATOR PELANGGARAN JIKA ADA */}
+                                {res.violation_count > 0 && (
+                                    <span className="text-[9px] text-red-600 font-bold mt-1 bg-red-50 px-1.5 py-0.5 rounded-md border border-red-100 w-fit flex items-center gap-1">
+                                       <ShieldAlert size={10} />
+                                       Pelanggaran: {res.violation_count}x
+                                    </span>
+                                )}
+                             </div>
+                          </td>
+                          <td className="px-4 py-3 text-center align-middle">
+                            <div className="flex items-center justify-center gap-2 whitespace-nowrap">
+                              <label className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] md:text-xs font-bold cursor-pointer transition-all select-none ${
+                                isSudah
+                                  ? 'bg-red-600 text-white border-red-600 shadow-sm'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={isSudah}
+                                  onChange={() => handleToggleGraded(res.id, 'sudah')}
+                                  className="w-3.5 h-3.5 accent-red-600 cursor-pointer rounded"
+                                />
+                                <span>Sudah</span>
+                              </label>
+
+                              <label className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] md:text-xs font-bold cursor-pointer transition-all select-none ${
+                                !isSudah
+                                  ? 'bg-slate-200 text-slate-800 border-slate-300'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={!isSudah}
+                                  onChange={() => handleToggleGraded(res.id, 'belum')}
+                                  className="w-3.5 h-3.5 accent-slate-600 cursor-pointer rounded"
+                                />
+                                <span>Belum</span>
+                              </label>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-center align-top md:align-middle">
+                            <button
+                              onClick={() => handleDeleteResult(res.id, res.student_name)}
+                              className="bg-red-50 text-red-500 p-2 rounded-lg hover:bg-red-600 hover:text-white transition-all active:scale-95"
+                              title="Hapus Hasil (Siswa bisa ujian ulang)"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
             )}
