@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Save, User, Award, CheckCircle2, ArrowLeft, Users, Search, Calendar, FileUp, Download, Upload, Info, FileCheck } from 'lucide-react';
+import { Save, User, Award, CheckCircle2, ArrowLeft, Users, Search, Calendar, FileUp, Download, Upload, Info, FileCheck, Trash2, Edit3, Filter } from 'lucide-react';
 import { db } from '../services/supabaseMock';
 import { Student, GradeLevel } from '../types';
 import Swal from 'sweetalert2';
@@ -47,6 +47,288 @@ const TeacherInputGrades: React.FC = () => {
   const [importAssessments, setImportAssessments] = useState<any[]>([]); // List of Assessments for current import grade/sem/tp
 
   const [status, setStatus] = useState<'idle' | 'saving' | 'success'>('idle');
+  const [editingGradeId, setEditingGradeId] = useState<string | null>(null);
+  const [previewGrades, setPreviewGrades] = useState<any[]>([]);
+  const [previewFilterKelas, setPreviewFilterKelas] = useState('');
+  const [previewFilterSemester, setPreviewFilterSemester] = useState('');
+  const [previewSearchQuery, setPreviewSearchQuery] = useState('');
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+
+  const [allStudentsData, setAllStudentsData] = useState<any[]>([]);
+  const [allTpsData, setAllTpsData] = useState<any[]>([]);
+  const [allAsmsData, setAllAsmsData] = useState<any[]>([]);
+  const [allCpsData, setAllCpsData] = useState<any[]>([]);
+
+  // Keep preview filter default synced with form selection if not set explicitly
+  useEffect(() => {
+    if (selectedKelas && !previewFilterKelas) {
+      setPreviewFilterKelas(selectedKelas);
+    }
+  }, [selectedKelas]);
+
+  useEffect(() => {
+    if (semester && !previewFilterSemester) {
+      setPreviewFilterSemester(semester);
+    }
+  }, [semester]);
+
+  // Fetch all lookup tables
+  useEffect(() => {
+    const st = db.getLocalTable<any>('data_siswa');
+    const tp = db.getLocalTable<any>('tujuan_pembelajaran');
+    const asm = db.getLocalTable<any>('asesmen_tp');
+    const cp = db.getLocalTable<any>('capaian_pembelajaran');
+    setAllStudentsData(st || []);
+    setAllTpsData(tp || []);
+    setAllAsmsData(asm || []);
+    setAllCpsData(cp || []);
+  }, [status]);
+
+  // Load preview grades with class and semester filters & transition loading
+  useEffect(() => {
+    setIsPreviewLoading(true);
+    const timer = setTimeout(() => {
+      const allGrades = db.getLocalTable<any>('Nilai');
+      let filtered = [...allGrades];
+
+      if (previewFilterKelas) {
+        filtered = filtered.filter((g: any) => String(g.kelas || '').toUpperCase() === String(previewFilterKelas).toUpperCase());
+      }
+
+      if (previewFilterSemester) {
+        filtered = filtered.filter((g: any) => String(g.semester) === String(previewFilterSemester));
+      }
+
+      filtered.sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      setPreviewGrades(filtered);
+      setIsPreviewLoading(false);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [previewFilterKelas, previewFilterSemester, status]);
+
+  // Filter preview grades by search query (student name or NIS)
+  const filteredDisplayGrades = previewGrades.filter((g: any) => {
+    if (!previewSearchQuery.trim()) return true;
+    const stObj = allStudentsData.find((s: any) => s.id === g.student_id || s.nis === g.student_id) ||
+                  students.find((s: any) => s.id === g.student_id || s.nis === g.student_id);
+    const studentName = (stObj?.namalengkap || g.student_name || g.nama_siswa || g.student_id || '').toLowerCase();
+    const studentNis = String(stObj?.nis || g.nis || '').toLowerCase();
+    const q = previewSearchQuery.toLowerCase().trim();
+    return studentName.includes(q) || studentNis.includes(q);
+  });
+
+  // Helper to extract clean TP and Tugas text without showing IDs
+  const getTpAndTugasText = (g: any) => {
+    if (g.subject_type === 'uts') {
+      return { tpText: '-', tugasText: 'STS' };
+    }
+    if (g.subject_type === 'uas') {
+      return { tpText: '-', tugasText: 'SAS' };
+    }
+
+    const asm = allAsmsData.find((a: any) => a.id === g.description || a.name === g.description);
+    let tp: any = null;
+    if (asm) {
+      tp = allTpsData.find((t: any) => t.id === asm.tpId || t.code === asm.tpId);
+    }
+    if (!tp) {
+      tp = allTpsData.find((t: any) => t.id === g.description || t.code === g.description || t.name === g.description);
+    }
+
+    let tpText = '-';
+    let tugasText = '-';
+
+    // 1. Extract TP Code
+    if (tp) {
+      const rawTpCode = String(tp.code || tp.id || '').trim();
+      if (rawTpCode) {
+        if (/^tp\b/i.test(rawTpCode)) {
+          tpText = rawTpCode.toUpperCase();
+        } else {
+          tpText = `TP ${rawTpCode}`;
+        }
+      } else if (tp.name) {
+        tpText = tp.name.length > 20 ? tp.name.substring(0, 20) + '...' : tp.name;
+      }
+    } else if (asm) {
+      tpText = asm.name ? (asm.name.length > 18 ? asm.name.substring(0, 18) + '...' : asm.name) : 'TP 1';
+    } else if (g.description) {
+      const descStr = String(g.description).trim();
+      const tpMatch = descStr.match(/(tp\s*[\d.]+)/i);
+      if (tpMatch) {
+        tpText = tpMatch[1].toUpperCase();
+      } else {
+        tpText = 'TP 1';
+      }
+    }
+
+    // 2. Extract Tugas Text (Tugas 1, Tugas 2, Tugas 3, etc.)
+    if (asm) {
+      tugasText = asm.name || 'Tugas 1';
+    } else if (g.description) {
+      const descStr = String(g.description).trim();
+      if (descStr.startsWith('asm_') || descStr.startsWith('grade_')) {
+        tugasText = 'Tugas 1';
+      } else {
+        tugasText = descStr;
+      }
+    } else {
+      tugasText = g.subject_type === 'praktik' ? 'Praktik' : 'Tugas 1';
+    }
+
+    return { tpText, tugasText };
+  };
+
+  // Cancel edit helper
+  const handleCancelEdit = () => {
+    setEditingGradeId(null);
+    setScore('');
+    setDesc('');
+    setSelectedStudentId('');
+    setSelectedAssessmentId('');
+    setSelectedTpId('');
+  };
+
+  // Handler for Edit Grade (Fills form in the top section instead of modal)
+  const handleEditGrade = (gradeItem: any) => {
+    setEditingGradeId(gradeItem.id);
+
+    // 1. Set Jenjang & Kelas
+    if (gradeItem.kelas) {
+      const j = gradeItem.kelas.charAt(0) as GradeLevel;
+      if (['7', '8', '9'].includes(j)) setGrade(j);
+      setSelectedKelas(gradeItem.kelas);
+    }
+
+    // 2. Set Semester
+    if (gradeItem.semester) {
+      setSemester(String(gradeItem.semester));
+    }
+
+    // 3. Set Tanggal
+    if (gradeItem.created_at) {
+      setDate(gradeItem.created_at.split('T')[0]);
+    }
+
+    // 4. Set Score
+    setScore(String(gradeItem.score ?? ''));
+
+    // 5. Set Jenis Tugas
+    const t = gradeItem.subject_type === 'uts' ? 'PTS' :
+              gradeItem.subject_type === 'uas' ? 'UAS' :
+              gradeItem.subject_type === 'praktik' ? 'Praktik' : 'Harian';
+    setType(t);
+
+    // 6. Set Student
+    setSelectedStudentId(gradeItem.student_id || '');
+
+    // 7. Set Description / Assessment / TP
+    if (t === 'Harian' || t === 'Praktik') {
+      const asm = allAsmsData.find((a: any) => a.id === gradeItem.description || a.name === gradeItem.description);
+      if (asm) {
+        setSelectedTpId(asm.tpId || '');
+        setSelectedAssessmentId(asm.id || '');
+      } else {
+        setSelectedAssessmentId(gradeItem.description || '');
+      }
+    } else {
+      setDesc(gradeItem.description || '');
+    }
+
+    // Scroll smoothly to form top
+    window.scrollTo({ top: 120, behavior: 'smooth' });
+  };
+
+  // Handler for Delete Grade with double confirmation & spreadsheet sync
+  const handleDeleteGrade = async (gradeItem: any) => {
+    const stObj = allStudentsData.find((s: any) => s.id === gradeItem.student_id || s.nis === gradeItem.student_id) ||
+                  students.find((s: any) => s.id === gradeItem.student_id);
+    const studentName = stObj?.namalengkap || gradeItem.student_id || 'Siswa';
+
+    // Konfirmasi 1 (Double Check Step 1)
+    const conf1 = await Swal.fire({
+      title: 'Hapus Nilai ini? (Tahap 1/2)',
+      html: `
+        <div class="text-left text-xs space-y-1.5 bg-rose-50 p-3 rounded-xl border border-rose-100 text-rose-900 mt-2">
+          <p><strong>Siswa:</strong> ${studentName}</p>
+          <p><strong>Kelas:</strong> ${gradeItem.kelas || '-'} (Semester ${gradeItem.semester || '1'})</p>
+          <p><strong>Nilai:</strong> ${gradeItem.score}</p>
+        </div>
+        <p class="text-slate-500 text-xs mt-3">Apakah Anda yakin ingin melanjutkan proses penghapusan ini?</p>
+      `,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#e11d48',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Lanjut Hapus',
+      cancelButtonText: 'Batal',
+      heightAuto: false
+    });
+
+    if (!conf1.isConfirmed) return;
+
+    // Konfirmasi 2 (Pengamanan Ganda Step 2)
+    const conf2 = await Swal.fire({
+      title: 'Konfirmasi Permanen (Tahap 2/2)',
+      text: 'Peringatan! Menghapus data ini akan menghapus nilai dari database dan menyinkronkan ke Google Sheets sheet Nilai secara permanen. Lanjutkan?',
+      icon: 'error',
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'YA, HAPUS PERMANEN',
+      cancelButtonText: 'BATALKAN',
+      heightAuto: false
+    });
+
+    if (!conf2.isConfirmed) return;
+
+    Swal.fire({
+      title: 'Menghapus & Menyinkronkan...',
+      text: 'Sedang menghapus nilai dari database dan Google Sheets...',
+      didOpen: () => Swal.showLoading(),
+      allowOutsideClick: false,
+      heightAuto: false
+    });
+
+    try {
+      const list = db.getLocalTable<any>('Nilai');
+      const newList = list.filter((item: any) => item.id !== gradeItem.id);
+      db.setLocalTable('Nilai', newList);
+
+      // Explicitly sync updated Nilai table to Google Sheets
+      await db.syncTableToGoogleSheets('Nilai');
+
+      if (gradeItem.student_id && gradeItem.kelas && gradeItem.semester) {
+        await db.recalculateAndSaveKelolaNilaiForStudent(gradeItem.student_id, String(gradeItem.semester), gradeItem.kelas).catch(() => {});
+      }
+
+      setStatus('success');
+      setTimeout(() => setStatus('idle'), 100);
+
+      Swal.close();
+      setTimeout(() => {
+        Swal.fire({
+          icon: 'success',
+          title: 'Berhasil Dihapus',
+          text: 'Data nilai telah terhapus di database dan terupdate di Google Sheets.',
+          timer: 1800,
+          showConfirmButton: false,
+          heightAuto: false
+        });
+      }, 150);
+    } catch (err: any) {
+      Swal.close();
+      setTimeout(() => {
+        Swal.fire({
+          icon: 'error',
+          title: 'Gagal Menghapus',
+          text: err.message || 'Terjadi kesalahan saat menghapus data.',
+          heightAuto: false
+        });
+      }, 150);
+    }
+  };
 
   // Load TPs and Assessments for selected grade & semester
   const [tps, setTps] = useState<any[]>([]);
@@ -358,8 +640,9 @@ const TeacherInputGrades: React.FC = () => {
     };
 
     // 2. Konfirmasi Sebelum Kirim
+    const isEditMode = Boolean(editingGradeId);
     const result = await Swal.fire({
-      title: 'Konfirmasi Kirim Nilai',
+      title: isEditMode ? 'Konfirmasi Perbarui Nilai' : 'Konfirmasi Kirim Nilai',
       html: `
         <div style="text-align: left; font-size: 0.9em; line-height: 1.5; background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #e2e8f0;">
           <p><strong>Nama:</strong> ${selectedStudentName}</p>
@@ -370,13 +653,13 @@ const TeacherInputGrades: React.FC = () => {
           <p><strong>Nilai:</strong> <span style="color: #059669; font-weight: bold;">${score}</span></p>
           <p><strong>Materi/Ket:</strong> ${currentAsmName} ${!isHarian && desc.trim() ? `(${desc.trim()})` : ''}</p>
         </div>
-        <p style="margin-top: 10px; font-size: 0.8em; color: #64748b;">Pastikan data sudah benar sebelum dikirim.</p>
+        <p style="margin-top: 10px; font-size: 0.8em; color: #64748b;">Pastikan data sudah benar sebelum ${isEditMode ? 'diperbarui' : 'dikirim'}.</p>
       `,
       icon: 'question',
       showCancelButton: true,
-      confirmButtonColor: '#059669',
+      confirmButtonColor: isEditMode ? '#2563eb' : '#059669',
       cancelButtonColor: '#d33',
-      confirmButtonText: 'Ya, Kirim Nilai',
+      confirmButtonText: isEditMode ? 'Ya, Perbarui' : 'Ya, Kirim Nilai',
       cancelButtonText: 'Batal',
       heightAuto: false,
       customClass: {
@@ -388,29 +671,70 @@ const TeacherInputGrades: React.FC = () => {
 
     setStatus('saving');
     try {
-      await db.addGrade({ 
-        student_id: selectedStudentId, 
-        subject_type: savedSubjectType as 'harian' | 'uts' | 'uas' | 'praktik', 
-        score: parseInt(score), 
-        description: savedDescription, 
-        kelas: selectedKelas, 
-        semester,
-        created_at: new Date(date).toISOString() 
-      });
-      
-      setStatus('success');
-      
-      setTimeout(() => { 
-        setStatus('idle'); 
-        setScore(''); 
-        setDesc(''); // Clear content description (Sesuai Permintaan)
-        setSelectedStudentId('');
-      }, 1500);
+      if (isEditMode && editingGradeId) {
+        const allGrades = db.getLocalTable<any>('Nilai');
+        const idx = allGrades.findIndex((item: any) => item.id === editingGradeId);
+        if (idx !== -1) {
+          allGrades[idx] = {
+            ...allGrades[idx],
+            student_id: selectedStudentId,
+            subject_type: savedSubjectType as any,
+            score: parseInt(score),
+            description: savedDescription,
+            kelas: selectedKelas,
+            semester,
+            created_at: new Date(date).toISOString(),
+            updated_at: new Date().toISOString()
+          };
+          db.setLocalTable('Nilai', allGrades);
+          await db.syncTableToGoogleSheets('Nilai').catch(() => {});
 
-      Swal.fire({ icon: 'success', title: 'Nilai Berhasil Disimpan', timer: 1500, showConfirmButton: false, heightAuto: false });
+          if (selectedStudentId && selectedKelas && semester) {
+            await db.recalculateAndSaveKelolaNilaiForStudent(selectedStudentId, semester, selectedKelas).catch(() => {});
+          }
+
+          setStatus('success');
+          setTimeout(() => {
+            setStatus('idle');
+            handleCancelEdit();
+          }, 1200);
+
+          Swal.fire({
+            icon: 'success',
+            title: 'Nilai Berhasil Diperbarui',
+            text: 'Data telah diperbarui dan tersinkronisasi ke Google Sheets.',
+            timer: 1500,
+            showConfirmButton: false,
+            heightAuto: false
+          });
+        } else {
+          throw new Error('Data nilai tidak ditemukan.');
+        }
+      } else {
+        await db.addGrade({ 
+          student_id: selectedStudentId, 
+          subject_type: savedSubjectType as 'harian' | 'uts' | 'uas' | 'praktik', 
+          score: parseInt(score), 
+          description: savedDescription, 
+          kelas: selectedKelas, 
+          semester,
+          created_at: new Date(date).toISOString() 
+        });
+        
+        setStatus('success');
+        
+        setTimeout(() => { 
+          setStatus('idle'); 
+          setScore(''); 
+          setDesc(''); // Clear content description
+          setSelectedStudentId('');
+        }, 1500);
+
+        Swal.fire({ icon: 'success', title: 'Nilai Berhasil Disimpan', timer: 1500, showConfirmButton: false, heightAuto: false });
+      }
     } catch (err: any) {
       setStatus('idle');
-      Swal.fire({ icon: 'error', title: 'Gagal', text: 'Terjadi kesalahan sistem.', heightAuto: false });
+      Swal.fire({ icon: 'error', title: 'Gagal', text: err.message || 'Terjadi kesalahan sistem.', heightAuto: false });
     }
   };
 
@@ -866,10 +1190,267 @@ const TeacherInputGrades: React.FC = () => {
             </div>
           )}
 
-          <button type="submit" disabled={status !== 'idle'} className={`w-full py-3 md:py-4 rounded-xl text-[10px] md:text-sm font-black flex items-center justify-center gap-2 shadow-lg uppercase tracking-widest ${status === 'success' ? 'bg-emerald-500 text-white' : 'bg-emerald-700 text-white hover:bg-emerald-800 disabled:bg-slate-200'}`}>
-            {status === 'saving' ? 'Menyimpan...' : status === 'success' ? <><CheckCircle2 size={16} /> Berhasil!</> : <><Save size={16} /> Simpan Nilai</>}
-          </button>
+          <div className="space-y-2">
+            {editingGradeId && (
+              <div className="bg-blue-50 border border-blue-200 text-blue-800 px-3 py-2 rounded-xl text-xs flex items-center justify-between font-medium">
+                <span>Sedang mengedit data nilai terpilih. Silakan perbarui atau batalkan.</span>
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="text-xs font-bold text-rose-600 hover:underline"
+                >
+                  Batal
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <button 
+                type="submit" 
+                disabled={status !== 'idle'} 
+                className={`flex-1 py-3 md:py-4 rounded-xl text-[10px] md:text-sm font-black flex items-center justify-center gap-2 shadow-lg uppercase tracking-widest transition-all ${
+                  editingGradeId
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : status === 'success' ? 'bg-emerald-500 text-white' : 'bg-emerald-700 text-white hover:bg-emerald-800'
+                } disabled:bg-slate-200`}
+              >
+                {status === 'saving' 
+                  ? 'Menyimpan...' 
+                  : editingGradeId 
+                  ? <><Save size={16} /> Perbarui Nilai</> 
+                  : status === 'success' 
+                  ? <><CheckCircle2 size={16} /> Berhasil!</> 
+                  : <><Save size={16} /> Simpan Nilai</>}
+              </button>
+
+              {editingGradeId && (
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="px-4 py-3 md:py-4 rounded-xl text-[10px] md:text-sm font-black bg-rose-100 text-rose-700 hover:bg-rose-200 transition uppercase tracking-widest"
+                >
+                  Batal Edit
+                </button>
+              )}
+            </div>
+          </div>
         </form>
+      </div>
+
+      {/* KARTU PREVIEW NILAI YANG SUDAH DIINPUT GURU */}
+      <div className="bg-white p-4 md:p-6 rounded-2xl md:rounded-3xl border border-slate-100 shadow-sm space-y-4">
+        <style>{`
+          .custom-mini-scrollbar::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+          }
+          .custom-mini-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+          }
+          .custom-mini-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, 0.25);
+            border-radius: 9999px;
+          }
+          .custom-mini-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(148, 163, 184, 0.45);
+          }
+        `}</style>
+        <div className="space-y-3 border-b border-slate-100 pb-3.5">
+          {/* JUDUL PREVIEW NILAI INPUT */}
+          <div className="flex items-center gap-2.5">
+            <div className="bg-emerald-50 text-emerald-700 p-2 rounded-xl shrink-0">
+              <Award size={18} />
+            </div>
+            <div>
+              <h2 className="text-xs md:text-sm font-black uppercase tracking-wider text-slate-800 whitespace-nowrap">
+                Preview Nilai Input
+              </h2>
+              <p className="text-[10px] text-slate-400 font-medium">
+                Daftar seluruh data nilai yang terupdate dari spreadsheet / database.
+              </p>
+            </div>
+          </div>
+
+          {/* FILTERS & SEARCH BAR BARIS DIBAWAH JUDUL */}
+          <div className="flex flex-wrap items-center gap-2.5 pt-1">
+            {/* 1. Kolom Pencarian (Search Bar) */}
+            <div className="relative flex-1 min-w-[180px] sm:max-w-xs">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Cari nama siswa / NIS..."
+                value={previewSearchQuery}
+                onChange={(e) => setPreviewSearchQuery(e.target.value)}
+                className="w-full pl-7 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition"
+              />
+              {previewSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setPreviewSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {/* 2. Filter Semester */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+              <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">Sem:</span>
+              <select
+                value={previewFilterSemester}
+                onChange={(e) => setPreviewFilterSemester(e.target.value)}
+                className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+              >
+                <option value="">Semua</option>
+                <option value="1">Sem 1</option>
+                <option value="2">Sem 2</option>
+              </select>
+            </div>
+
+            {/* 3. Filter Kelas */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+              <Filter size={12} className="text-slate-400" />
+              <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">Kelas:</span>
+              <select
+                value={previewFilterKelas}
+                onChange={(e) => setPreviewFilterKelas(e.target.value)}
+                className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+              >
+                <option value="">Semua Kelas</option>
+                {allClassesList.map((k) => (
+                  <option key={k} value={k}>
+                    Kelas {k}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 4. Hasil Jumlah Data */}
+            <span className="px-3 py-1.5 rounded-xl text-xs font-black bg-emerald-100 text-emerald-800 whitespace-nowrap ml-auto">
+              {filteredDisplayGrades.length} / {previewGrades.length} Data
+            </span>
+          </div>
+        </div>
+
+        {/* LOADING SKELETON / TRANSITION EFFECT */}
+        {isPreviewLoading ? (
+          <div className="border border-slate-100 rounded-xl p-4 space-y-3 bg-slate-50/50">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="animate-pulse flex items-center justify-between gap-4 py-1">
+                <div className="h-3 bg-slate-200 rounded w-6"></div>
+                <div className="h-3 bg-slate-200 rounded w-1/3"></div>
+                <div className="h-3 bg-slate-200 rounded w-10"></div>
+                <div className="h-3 bg-slate-200 rounded w-14"></div>
+                <div className="h-3 bg-slate-200 rounded w-20"></div>
+                <div className="h-3 bg-slate-200 rounded w-24"></div>
+                <div className="h-3 bg-slate-200 rounded w-8"></div>
+              </div>
+            ))}
+          </div>
+        ) : filteredDisplayGrades.length === 0 ? (
+          <div className="text-center py-8 bg-slate-50/50 rounded-2xl border border-slate-100">
+            <p className="text-xs text-slate-400 font-medium">
+              {previewSearchQuery 
+                ? 'Siswa / data nilai tidak ditemukan untuk kata kunci pencarian.' 
+                : 'Belum ada data nilai yang tersimpan untuk filter kelas & semester ini.'}
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto border border-slate-100 rounded-xl max-h-[420px] overflow-y-auto custom-mini-scrollbar shadow-inner transition-all duration-300">
+            <table className="w-full text-left border-collapse text-xs min-w-max">
+              <thead>
+                <tr className="bg-slate-100 text-slate-600 font-black text-[9px] uppercase tracking-wider sticky top-0 z-20 border-b border-slate-200">
+                  <th className="py-2 px-2.5 w-8 text-center whitespace-nowrap sticky left-0 z-30 bg-slate-100">NO</th>
+                  <th className="py-2 px-2.5 whitespace-nowrap sticky left-8 z-30 bg-slate-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.12)]">NAMA SISWA &amp; NIS</th>
+                  <th className="py-2 px-2.5 text-center whitespace-nowrap">SEMESTER</th>
+                  <th className="py-2 px-2.5 text-center whitespace-nowrap">JENIS TUGAS</th>
+                  <th className="py-2 px-2.5 text-center whitespace-nowrap">TP</th>
+                  <th className="py-2 px-2.5 text-center whitespace-nowrap">TUGAS</th>
+                  <th className="py-2 px-2.5 text-center whitespace-nowrap">NILAI</th>
+                  <th className="py-2 px-2.5 text-center whitespace-nowrap">TANGGAL</th>
+                  <th className="py-2 px-2.5 text-center whitespace-nowrap">AKSI</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                {filteredDisplayGrades.map((g, idx) => {
+                  // Student Lookup
+                  const stObj = allStudentsData.find((s: any) => s.id === g.student_id || s.nis === g.student_id) ||
+                                students.find((s: any) => s.id === g.student_id || s.nis === g.student_id);
+                  const studentName = stObj?.namalengkap || g.student_name || g.nama_siswa || g.student_id || '-';
+                  const studentNis = stObj?.nis || g.nis || '-';
+
+                  // Type Label
+                  const typeLabel = 
+                    g.subject_type === 'uts' ? 'STS' :
+                    g.subject_type === 'uas' ? 'SAS' :
+                    g.subject_type === 'praktik' ? 'Praktik' : 'Harian';
+
+                  // TP & Tugas Text Lookup
+                  const { tpText, tugasText } = getTpAndTugasText(g);
+
+                  return (
+                    <tr key={g.id || idx} className="hover:bg-slate-50/80 transition border-b border-slate-50 group">
+                      <td className="py-1.5 px-2.5 text-center font-bold text-slate-400 text-[11px] sticky left-0 z-10 bg-white group-hover:bg-slate-50/90">{idx + 1}</td>
+                      <td className="py-1.5 px-2.5 font-bold text-slate-800 whitespace-nowrap sticky left-8 z-10 bg-white group-hover:bg-slate-50/90 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                        <div className="text-[11px] leading-tight">{studentName}</div>
+                        <div className="text-[9px] text-slate-400 font-mono font-normal">NIS: {studentNis}</div>
+                      </td>
+                      <td className="py-1.5 px-2.5 text-center whitespace-nowrap">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-700">
+                          Sem {g.semester || '1'}
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2.5 text-center whitespace-nowrap">
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                          typeLabel === 'STS' ? 'bg-rose-100 text-rose-800' :
+                          typeLabel === 'SAS' ? 'bg-indigo-100 text-indigo-800' :
+                          typeLabel === 'Praktik' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {typeLabel}
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2.5 text-center whitespace-nowrap">
+                        <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[10px] inline-block whitespace-nowrap">
+                          {tpText}
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2.5 text-center whitespace-nowrap">
+                        <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[10px] inline-block whitespace-nowrap">
+                          {tugasText}
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2.5 text-center font-black font-mono text-emerald-700 text-xs whitespace-nowrap">{g.score}</td>
+                      <td className="py-1.5 px-2.5 text-center text-[9px] text-slate-400 font-mono whitespace-nowrap">
+                        {g.created_at ? g.created_at.split('T')[0] : '-'}
+                      </td>
+                      <td className="py-1.5 px-2.5 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleEditGrade(g)}
+                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                            title="Edit Nilai"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteGrade(g)}
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="Hapus Nilai"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* KARTU BARU: IMPORT NILAI VIA EXCEL */}

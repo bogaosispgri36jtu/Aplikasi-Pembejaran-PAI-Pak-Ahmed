@@ -446,32 +446,12 @@ const TeacherSettings: React.FC = () => {
                     )}
                   </div>
 
-                  {/* TOMBOL MANUSIA / SINKRONISASI MANUAL KE & DARI GOOGLE SHEETS */}
+                  {/* TOMBOL BERSIHKAN CACHE SINKRONASI */}
                   <div className="pt-3 border-t border-slate-100 space-y-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <button
-                        onClick={handleManualSyncToSheets}
-                        disabled={isSyncing}
-                        className="w-full py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-                        <span>Kirim Data Ke Sheets</span>
-                      </button>
-
-                      <button
-                        onClick={handleManualPullFromSheets}
-                        disabled={isSyncing}
-                        className="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        <Download size={14} className={isSyncing ? "animate-spin" : ""} />
-                        <span>Tarik Data Dari Sheets</span>
-                      </button>
-                    </div>
-
                     <button
                       onClick={handleClearSyncCache}
                       disabled={isSyncing}
-                      className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
                       title="Bersihkan cache sinkronisasi dan paksa muat ulang data terbaru dari Google Sheets"
                     >
                       <Trash2 size={13} />

@@ -267,7 +267,7 @@ const TeacherDashboard: React.FC = () => {
             color="pink" 
             label="Tugas Online" 
             value={stats.onlineExamsCount} 
-            onClick={() => navigate('/guru/tugas-masuk')}
+            onClick={() => navigate('/guru/tugas-masuk?tab=online')}
         />
         {/* Status Absensi dengan indikator visual */}
         <div 

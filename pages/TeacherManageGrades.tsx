@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, BookOpen, Plus, Trash2, Edit2, Check, Settings, Save, Award, Scroll, 
-  Users, CheckCircle2, ChevronRight, AlertTriangle, ListFilter, HelpCircle, FileDown, Eye, ShieldAlert, FileSpreadsheet
+  Users, CheckCircle2, ChevronRight, AlertTriangle, ListFilter, HelpCircle, FileDown, Eye, ShieldAlert, FileSpreadsheet, RefreshCw
 } from 'lucide-react';
 import { db } from '../services/supabaseMock';
 import { Student } from '../types';
@@ -115,6 +115,12 @@ const TeacherManageGrades: React.FC = () => {
   // Search Filter for Rekap
   const [searchQuery, setSearchQuery] = useState('');
   const [syncingKelola, setSyncingKelola] = useState(false);
+  const [hasGenerated, setHasGenerated] = useState(false);
+
+  // Reset hasGenerated when class, grade, or semester changes
+  useEffect(() => {
+    setHasGenerated(false);
+  }, [selectedKelas, selectedGrade, selectedSemester]);
 
   // --- INITIALIZE DATA & TRIGGERS ---
   useEffect(() => {
@@ -158,129 +164,173 @@ const TeacherManageGrades: React.FC = () => {
     }
   }, [selectedKelas]);
 
-  // Synchronize database grades and attendance by default
-  useEffect(() => {
+  // Synchronize database grades and attendance when Generate button is clicked
+  const syncDatabaseData = async () => {
     if (!selectedKelas || !selectedSemester || students.length === 0) return;
 
-    const syncDatabaseData = async () => {
-      try {
-        // 1. Fetch attendance records
-        const attRecords = await db.getAttendanceByKelas(selectedKelas, selectedSemester);
-        
-        // Compute attendance counts per student
-        const attendanceCounts: Record<string, { sakit: number; izin: number; alpha: number }> = {};
+    try {
+      // 1. Fetch attendance records
+      const attRecords = await db.getAttendanceByKelas(selectedKelas, selectedSemester);
+      
+      // Compute attendance counts per student
+      const attendanceCounts: Record<string, { sakit: number; izin: number; alpha: number }> = {};
+      students.forEach(s => {
+        attendanceCounts[s.id!] = { sakit: 0, izin: 0, alpha: 0 };
+      });
+
+      attRecords.forEach(att => {
+        const sId = att.student_id;
+        if (attendanceCounts[sId]) {
+          if (att.status === 'sakit') attendanceCounts[sId].sakit++;
+          else if (att.status === 'izin') attendanceCounts[sId].izin++;
+          else if (att.status === 'alfa' || att.status === 'alpha') attendanceCounts[sId].alpha++;
+        }
+      });
+
+      // 2. Fetch grades records
+      const gradeRecords = await db.getGradesByKelas(selectedKelas, selectedSemester);
+      
+      const integratedTpScores: Record<string, number> = {};
+      const integratedSts: Record<string, number | ''> = {};
+      const integratedSas: Record<string, number | ''> = {};
+
+      gradeRecords.forEach(g => {
+        const sId = g.student_id;
+        const typeLower = String(g.subject_type).toLowerCase().trim();
+        if (typeLower === 'uts' || typeLower === 'pts') {
+          integratedSts[sId] = g.score;
+        } else if (typeLower === 'uas' || typeLower === 'pas') {
+          integratedSas[sId] = g.score;
+        } else {
+          if (g.description) {
+            const scoreKey = `${sId}_${g.description}`;
+            integratedTpScores[scoreKey] = g.score;
+          }
+        }
+      });
+
+      // 3. Fetch nilai_rapot records for custom Sikap & Katrol values
+      const kelolaNilaiRecords = await db.getKelolaNilai();
+      const dbSikap: Record<string, string> = {};
+      const dbKatrol: Record<string, number | ''> = {};
+      
+      kelolaNilaiRecords.forEach(rec => {
+        const key = `${rec.student_id}_${rec.semester}`;
+        if (rec.sikap !== undefined) dbSikap[key] = rec.sikap;
+        if (rec.katrol !== undefined) dbKatrol[key] = rec.katrol === '' ? '' : Number(rec.katrol);
+      });
+
+      // Merge with overalls state
+      setOveralls(prevOveralls => {
+        const updatedOveralls = { ...prevOveralls };
         students.forEach(s => {
-          attendanceCounts[s.id!] = { sakit: 0, izin: 0, alpha: 0 };
-        });
+          const sId = s.id!;
+          const key = `${sId}_${selectedSemester}`;
+          const current = updatedOveralls[key] || {
+            studentId: sId,
+            kelas: selectedKelas,
+            semester: selectedSemester,
+            sts: '',
+            sas: '',
+            sikap: '',
+            kehadiran: { sakit: 0, izin: 0, alpha: 0 },
+            katrol: ''
+          };
 
-        attRecords.forEach(att => {
-          const sId = att.student_id;
-          if (attendanceCounts[sId]) {
-            if (att.status === 'sakit') attendanceCounts[sId].sakit++;
-            else if (att.status === 'izin') attendanceCounts[sId].izin++;
-            else if (att.status === 'alfa' || att.status === 'alpha') attendanceCounts[sId].alpha++;
-          }
+          updatedOveralls[key] = {
+            ...current,
+            sts: integratedSts[sId] !== undefined ? integratedSts[sId] : current.sts,
+            sas: integratedSas[sId] !== undefined ? integratedSas[sId] : current.sas,
+            kehadiran: attendanceCounts[sId] || current.kehadiran,
+            sikap: dbSikap[key] !== undefined ? dbSikap[key] : (current.sikap || ''),
+            katrol: dbKatrol[key] !== undefined ? dbKatrol[key] : (current.katrol || '')
+          };
         });
-
-        // 2. Fetch grades records
-        const gradeRecords = await db.getGradesByKelas(selectedKelas, selectedSemester);
         
-        const integratedTpScores: Record<string, number> = {};
-        const integratedSts: Record<string, number | ''> = {};
-        const integratedSas: Record<string, number | ''> = {};
+        localStorage.setItem('pai_grades_overalls', JSON.stringify(updatedOveralls));
+        return updatedOveralls;
+      });
 
-        gradeRecords.forEach(g => {
-          const sId = g.student_id;
-          const typeLower = String(g.subject_type).toLowerCase().trim();
-          if (typeLower === 'uts' || typeLower === 'pts') {
-            integratedSts[sId] = g.score;
-          } else if (typeLower === 'uas' || typeLower === 'pas') {
-            integratedSas[sId] = g.score;
-          } else {
-            if (g.description) {
-              const scoreKey = `${sId}_${g.description}`;
-              integratedTpScores[scoreKey] = g.score;
-            }
-          }
-        });
+      // Merge with tpScores state
+      setTpScores(prevTpScores => {
+        const mergedTpScores = { ...prevTpScores, ...integratedTpScores };
 
-        // 3. Fetch nilai_rapot records for custom Sikap & Katrol values
-        const kelolaNilaiRecords = await db.getKelolaNilai();
-        const dbSikap: Record<string, string> = {};
-        const dbKatrol: Record<string, number | ''> = {};
-        
-        kelolaNilaiRecords.forEach(rec => {
-          const key = `${rec.student_id}_${rec.semester}`;
-          if (rec.sikap !== undefined) dbSikap[key] = rec.sikap;
-          if (rec.katrol !== undefined) dbKatrol[key] = rec.katrol === '' ? '' : Number(rec.katrol);
-        });
-
-        // Merge with overalls state
-        setOveralls(prevOveralls => {
-          const updatedOveralls = { ...prevOveralls };
-          students.forEach(s => {
-            const sId = s.id!;
-            const key = `${sId}_${selectedSemester}`;
-            const current = updatedOveralls[key] || {
-              studentId: sId,
-              kelas: selectedKelas,
-              semester: selectedSemester,
-              sts: '',
-              sas: '',
-              sikap: '',
-              kehadiran: { sakit: 0, izin: 0, alpha: 0 },
-              katrol: ''
-            };
-
-            updatedOveralls[key] = {
-              ...current,
-              sts: integratedSts[sId] !== undefined ? integratedSts[sId] : current.sts,
-              sas: integratedSas[sId] !== undefined ? integratedSas[sId] : current.sas,
-              kehadiran: attendanceCounts[sId] || current.kehadiran,
-              sikap: dbSikap[key] !== undefined ? dbSikap[key] : (current.sikap || ''),
-              katrol: dbKatrol[key] !== undefined ? dbKatrol[key] : (current.katrol || '')
-            };
-          });
-          
-          localStorage.setItem('pai_grades_overalls', JSON.stringify(updatedOveralls));
-          return updatedOveralls;
-        });
-
-        // Merge with tpScores state
-        setTpScores(prevTpScores => {
-          const mergedTpScores = { ...prevTpScores, ...integratedTpScores };
-
-          // Fallback matching by name/id: if an assessment has no score but a grade record fits by title
-          students.forEach(s => {
-            const studentId = s.id!;
-            currentClassAssessments.forEach(asm => {
-              const scoreKey = `${studentId}_${asm.id}`;
-              if (mergedTpScores[scoreKey] === undefined || mergedTpScores[scoreKey] === '') {
-                const matchVal = gradeRecords.find(g => 
-                  g.student_id === studentId && 
-                  g.description && 
-                  (String(g.description).toLowerCase().trim() === String(asm.id).toLowerCase().trim() ||
-                   String(g.description).toLowerCase().trim() === String(asm.name).toLowerCase().trim() ||
-                   String(g.description).toLowerCase().trim() === String(asm.name).replace(/\([^\)]+\)/g, '').toLowerCase().trim())
-                );
-                if (matchVal) {
-                  mergedTpScores[scoreKey] = matchVal.score;
-                }
+        // Fallback matching by name/id
+        students.forEach(s => {
+          const studentId = s.id!;
+          currentClassAssessments.forEach(asm => {
+            const scoreKey = `${studentId}_${asm.id}`;
+            if (mergedTpScores[scoreKey] === undefined || mergedTpScores[scoreKey] === '') {
+              const matchVal = gradeRecords.find(g => 
+                g.student_id === studentId && 
+                g.description && 
+                (String(g.description).toLowerCase().trim() === String(asm.id).toLowerCase().trim() ||
+                 String(g.description).toLowerCase().trim() === String(asm.name).toLowerCase().trim() ||
+                 String(g.description).toLowerCase().trim() === String(asm.name).replace(/\([^\)]+\)/g, '').toLowerCase().trim())
+              );
+              if (matchVal) {
+                mergedTpScores[scoreKey] = matchVal.score;
               }
-            });
+            }
           });
-
-          localStorage.setItem('pai_grades_tp_scores', JSON.stringify(mergedTpScores));
-          return mergedTpScores;
         });
 
-      } catch (err) {
-        console.error("Gagal menyinkronkan data absensi dan nilai dari database:", err);
-      }
-    };
+        localStorage.setItem('pai_grades_tp_scores', JSON.stringify(mergedTpScores));
+        return mergedTpScores;
+      });
 
-    syncDatabaseData();
-  }, [selectedKelas, selectedSemester, students]);
+    } catch (err) {
+      console.error("Gagal menyinkronkan data absensi dan nilai dari database:", err);
+    }
+  };
+
+  const handleGenerateNilaiRapot = async () => {
+    if (!selectedKelas || students.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Siswa Tidak Ditemukan',
+        text: 'Silakan pilih kelas yang memiliki data siswa terlebih dahulu.',
+        confirmButtonColor: '#059669',
+        heightAuto: false
+      });
+      return;
+    }
+
+    Swal.fire({
+      title: 'Meng-generate Nilai Rapot...',
+      text: `Sedang memproses data nilai & absensi Kelas ${selectedKelas}...`,
+      didOpen: () => Swal.showLoading(),
+      allowOutsideClick: false,
+      heightAuto: false
+    });
+
+    try {
+      await syncDatabaseData();
+      setHasGenerated(true);
+      Swal.close();
+      setTimeout(() => {
+        Swal.fire({
+          icon: 'success',
+          title: 'Nilai Rapot Berhasil Di-generate!',
+          text: `Data nilai rapot untuk Kelas ${selectedKelas} Semester ${selectedSemester} telah siap.`,
+          timer: 1500,
+          showConfirmButton: false,
+          heightAuto: false
+        });
+      }, 150);
+    } catch (e: any) {
+      Swal.close();
+      setTimeout(() => {
+        Swal.fire({
+          icon: 'error',
+          title: 'Gagal Generate',
+          text: e.message || 'Terjadi kesalahan saat memuat data.',
+          confirmButtonColor: '#dc2626',
+          heightAuto: false
+        });
+      }, 150);
+    }
+  };
 
   // Load Grade Weights, TP, Assessments, Scores, Overalls from LocalStorage
   useEffect(() => {
@@ -1713,6 +1763,15 @@ const TeacherManageGrades: React.FC = () => {
             
             <div className="flex flex-wrap gap-2 self-end md:self-center">
               <button 
+                onClick={handleGenerateNilaiRapot}
+                className="py-1.5 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1.5 shadow-sm active:scale-95 duration-100"
+                title="Generate dan hitung rekap nilai rapot kelas"
+              >
+                <RefreshCw size={13} />
+                Generate Nilai Rapot
+              </button>
+
+              <button 
                 onClick={handleSaveAndSyncKelolaNilai}
                 disabled={syncingKelola}
                 className="py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1.5 shadow-sm disabled:opacity-50 active:scale-95 duration-100"
@@ -1740,15 +1799,37 @@ const TeacherManageGrades: React.FC = () => {
           </div>
 
           {/* SPREADSHEET WRAPPER AND CARIOUS COLS */}
-          {students.length === 0 ? (
+          {!hasGenerated ? (
+            <div className="bg-slate-50/70 p-8 md:p-12 rounded-3xl border border-slate-200 border-dashed text-center space-y-4 max-w-xl mx-auto my-6">
+              <div className="w-16 h-16 bg-emerald-100 text-emerald-800 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+                <Scroll size={32} />
+              </div>
+              <div>
+                <h3 className="text-base md:text-lg font-black uppercase text-slate-800 tracking-tight">
+                  Generate Nilai Rapot Kelas {selectedKelas || '-'} (Semester {selectedSemester})
+                </h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 leading-relaxed font-medium">
+                  Klik tombol &quot;Generate Nilai Rapot&quot; untuk mengambil dan merokap seluruh data nilai harian, STS, SAS, serta absensi siswa ke dalam lembar rapot.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateNilaiRapot}
+                className="px-6 py-3.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-lg shadow-emerald-100 hover:shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-2 mx-auto"
+              >
+                <RefreshCw size={16} />
+                <span>Generate Nilai Rapot</span>
+              </button>
+            </div>
+          ) : students.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-12 text-center bg-slate-50 rounded-2xl min-h-[300px]">
               <Users size={40} className="text-slate-300 mb-2" />
               <p className="text-slate-700 font-bold">Tidak ada data siswa</p>
               <p className="text-slate-400 text-xs mt-1">Ganti rute jenjang/pilih nomor kelas yang valid di atas.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto border border-slate-100 rounded-xl relative">
-              <table className="w-full text-left border-collapse min-w-[1200px]">
+            <div className="overflow-x-auto border border-slate-200 rounded-xl relative shadow-sm scrollbar-thin">
+              <table className="w-full text-left border-collapse min-w-[1300px]">
                 <thead>
                   <tr className="bg-slate-100 border-b border-slate-200">
                     <th className="p-3 text-[10px] font-black uppercase text-slate-500 tracking-wider w-12 sticky left-0 bg-slate-100 z-10">No</th>

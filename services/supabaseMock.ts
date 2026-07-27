@@ -726,7 +726,12 @@ class DatabaseService {
                 }
                 this.setLocalTable(cfg.name, items);
               } else {
-                this.setLocalTable(cfg.name, []);
+                const existingLocal = this.getLocalTable(cfg.name);
+                if (existingLocal && existingLocal.length > 0) {
+                  this.syncTableToGoogleSheets(cfg.name).catch(() => {});
+                } else {
+                  this.setLocalTable(cfg.name, []);
+                }
               }
             }
           } catch (e) {
@@ -753,7 +758,12 @@ class DatabaseService {
             const res = await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000`, { method: 'GET' }, token);
             const rows: any[][] = res.values || [];
             if (rows.length <= 1) {
-              this.setLocalTable(cfg.name, []);
+              const existingLocal = this.getLocalTable(cfg.name);
+              if (existingLocal && existingLocal.length > 0) {
+                this.syncTableToGoogleSheets(cfg.name, token).catch(() => {});
+              } else {
+                this.setLocalTable(cfg.name, []);
+              }
               continue;
             }
             
@@ -1190,10 +1200,15 @@ class DatabaseService {
     }
     this.setLocalTable('Nilai', list);
 
-      // Real-time integration: recalculate and save corresponding nilai_rapot record automatically!
-      if (grade.student_id && grade.semester && grade.kelas) {
-        await this.recalculateAndSaveKelolaNilaiForStudent(grade.student_id, String(grade.semester), String(grade.kelas));
-      }
+    // Real-time integration: recalculate and save corresponding nilai_rapot record automatically!
+    if (grade.student_id && grade.semester && grade.kelas) {
+      await this.recalculateAndSaveKelolaNilaiForStudent(grade.student_id, String(grade.semester), String(grade.kelas));
+    }
+
+    // Auto-sync directly to Google Sheets for sheet "Nilai" in background
+    this.syncTableToGoogleSheets('Nilai').catch(err => {
+      console.warn("Sinkronisasi otomatis Nilai ke Google Sheets:", err);
+    });
   }
 
   async recalculateAndSaveKelolaNilaiForStudent(studentId: string, semester: string, kelas: string): Promise<void> {
@@ -1601,12 +1616,14 @@ class DatabaseService {
     list.push(cleanSub);
     this.setLocalTable('data_TugasSiswa', list);
 
-    // Sync to Google Sheets!
+    // Sync to Google Sheets asynchronously in background (fast UI feedback!)
     const appsScriptUrl = await this.getAppsScriptUrl();
     const spreadsheetId = await this.getSpreadsheetId();
     if (appsScriptUrl || spreadsheetId) {
       const token = localStorage.getItem('google_oauth_token') || undefined;
-      await this.syncTableToGoogleSheets('data_TugasSiswa', token);
+      this.syncTableToGoogleSheets('data_TugasSiswa', token).catch(err => {
+        console.warn("Background sync error for data_TugasSiswa:", err);
+      });
     }
   }
 

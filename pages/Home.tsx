@@ -77,18 +77,18 @@ const Home: React.FC = () => {
   return (
     <div className="space-y-4 md:space-y-6 animate-fadeIn pb-4 md:pb-6">
       {/* Hero Section */}
-      <section className="relative overflow-hidden rounded-2xl md:rounded-[1.5rem] bg-emerald-700 text-white p-4 sm:p-6 md:p-8 shadow-lg shadow-emerald-200/50">
+      <section className="relative overflow-hidden rounded-2xl md:rounded-[1.5rem] bg-gradient-to-br from-emerald-800 to-emerald-950 text-white p-4 sm:p-6 md:p-8 shadow-lg shadow-emerald-100">
         <div className="relative z-10 md:w-3/4 space-y-2 sm:space-y-3">
-          <h1 className="text-base sm:text-lg md:text-xl font-extrabold leading-tight tracking-tight">
+          <h1 className="text-base sm:text-lg md:text-xl font-extrabold leading-tight tracking-tight uppercase">
             Cerdas Berilmu, Mulia Berakhlak
           </h1>
-          <p className="text-emerald-50 text-xs sm:text-sm max-w-lg leading-relaxed opacity-90">
+          <p className="text-emerald-100/90 text-xs sm:text-sm max-w-lg leading-relaxed font-medium">
             Portal pembelajaran terpadu Pendidikan Agama Islam
           </p>
           <div className="pt-1.5 flex flex-wrap gap-2.5">
             <button 
               onClick={() => navigate('/materi')}
-              className="bg-white text-emerald-700 px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10.5px] sm:text-xs font-bold hover:bg-emerald-50 transition-all shadow-sm active:scale-95 relative overflow-visible"
+              className="bg-white text-emerald-900 px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10.5px] sm:text-xs font-bold hover:bg-emerald-50 transition-all shadow-sm active:scale-95 relative overflow-visible"
             >
               Lihat Materi
               {unreadMats.length > 0 && (
@@ -100,7 +100,7 @@ const Home: React.FC = () => {
             </button>
             <button 
               onClick={() => navigate('/nilai')}
-              className="bg-emerald-600 text-white border border-emerald-500/50 px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10.5px] sm:text-xs font-bold hover:bg-emerald-800 transition-all shadow-sm active:scale-95"
+              className="bg-emerald-700/50 text-emerald-100 border border-emerald-600/40 px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10.5px] sm:text-xs font-bold hover:bg-emerald-700/80 transition-all shadow-sm active:scale-95"
             >
               Cek Nilai Saya
             </button>

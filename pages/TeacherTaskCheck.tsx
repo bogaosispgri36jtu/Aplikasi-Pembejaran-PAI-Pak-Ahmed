@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { Search, Filter, ExternalLink, Image as ImageIcon, Link as LinkIcon, Trash2, Loader2, Calendar, FileText, ArrowLeft, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
 import { db } from '../services/supabaseMock';
 import { TaskSubmission, GradeLevel } from '../types';
@@ -8,9 +8,21 @@ import { verifySecurityToken } from '../utils/security';
 
 const TeacherTaskCheck: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
   
   // --- STATE TABS & DATA ---
   const [activeTab, setActiveTab] = useState<'tasks' | 'exams'>('tasks');
+
+  // Check URL query param / location state for tab selection
+  useEffect(() => {
+    const tabParam = searchParams.get('tab') || location.state?.tab;
+    if (tabParam === 'online' || tabParam === 'exams') {
+      setActiveTab('exams');
+    } else if (tabParam === 'tasks' || tabParam === 'upload') {
+      setActiveTab('tasks');
+    }
+  }, [searchParams, location.state]);
   const [loading, setLoading] = useState(true);
   
   const [tasks, setTasks] = useState<TaskSubmission[]>([]);
@@ -100,28 +112,33 @@ const TeacherTaskCheck: React.FC = () => {
 
       const imagesHtml = urls.map((url, i) => `
         <div class="mb-6 border border-slate-200 rounded-2xl overflow-hidden bg-slate-100/70 p-3 shadow-sm">
-          <div class="flex items-center justify-between mb-2 px-1">
+          <div class="flex items-center justify-between mb-2 px-1 flex-wrap gap-2">
             <span class="text-[11px] font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
               <span class="w-2 h-2 rounded-full bg-emerald-600 inline-block"></span>
               FOTO TUGAS KE-${i + 1} DARI ${urls.length}
             </span>
-            <button 
-              type="button" 
-              class="open-full-img-btn px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 shadow-sm transition active:scale-95"
-              data-url="${url}"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
-              <span>Perbesar / Tab Baru</span>
-            </button>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] text-slate-400 font-medium hidden sm:inline-block">
+                💡 Sentuh / arahkan kursor ke foto untuk Auto-Zoom
+              </span>
+              <button 
+                type="button" 
+                class="open-full-img-btn px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                data-url="${url}"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+                <span>Perbesar / Tab Baru</span>
+              </button>
+            </div>
           </div>
-          <div class="bg-slate-900/5 rounded-xl border border-slate-200 p-2 flex justify-center items-center overflow-auto max-h-[70vh]">
+          <div class="img-zoom-box relative bg-slate-900/5 rounded-xl border border-slate-200 p-2 flex justify-center items-center overflow-hidden max-h-[70vh] cursor-zoom-in select-none">
             <img 
               src="${url}" 
-              class="task-img-preview w-auto h-auto max-w-full max-h-[680px] object-contain rounded-lg shadow-md cursor-zoom-in transition-transform hover:scale-[1.01]" 
+              class="task-img-preview w-auto h-auto max-w-full max-h-[680px] object-contain rounded-lg shadow-md transition-transform duration-200 ease-out" 
               alt="Foto Tugas ${i + 1}"
-              style="image-rendering: -webkit-optimize-contrast; image-rendering: crisp-edges;"
+              style="image-rendering: -webkit-optimize-contrast; image-rendering: crisp-edges; transform-origin: center center;"
               data-url="${url}"
-              title="Klik untuk membuka dalam ukuran penuh"
+              title="Arahkan kursor / sentuh foto untuk zoom otomatis. Klik foto / tombol untuk buka di tab baru."
             />
           </div>
         </div>
@@ -193,7 +210,7 @@ const TeacherTaskCheck: React.FC = () => {
         customClass: { popup: 'rounded-3xl max-w-5xl shadow-2xl' },
         heightAuto: false,
         didOpen: () => {
-          // Event listeners untuk tombol perbesar & klik foto
+          // Event listeners untuk tombol perbesar
           const btns = document.querySelectorAll('.open-full-img-btn');
           btns.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -203,10 +220,74 @@ const TeacherTaskCheck: React.FC = () => {
             });
           });
 
-          const imgs = document.querySelectorAll('.task-img-preview');
-          imgs.forEach(img => {
+          // Setup auto-zoom saat kursor digeser atau foto disentuh
+          const boxes = document.querySelectorAll('.img-zoom-box');
+          boxes.forEach(box => {
+            const img = box.querySelector('.task-img-preview') as HTMLImageElement | null;
+            if (!img) return;
+
+            let touchMoved = false;
+
+            const updateZoom = (clientX: number, clientY: number, scale = 2.2) => {
+              const rect = img.getBoundingClientRect();
+              if (rect.width === 0 || rect.height === 0) return;
+              const xPercent = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+              const yPercent = Math.max(0, Math.min(100, ((clientY - rect.top) / rect.height) * 100));
+              img.style.transformOrigin = `${xPercent}% ${yPercent}%`;
+              img.style.transform = `scale(${scale})`;
+            };
+
+            const resetZoom = () => {
+              img.style.transform = 'scale(1)';
+              img.style.transformOrigin = 'center center';
+            };
+
+            // Mouse events (Desktop)
+            box.addEventListener('mouseenter', (e: Event) => {
+              const me = e as MouseEvent;
+              updateZoom(me.clientX, me.clientY);
+            });
+
+            box.addEventListener('mousemove', (e: Event) => {
+              const me = e as MouseEvent;
+              updateZoom(me.clientX, me.clientY);
+            });
+
+            box.addEventListener('mouseleave', () => {
+              resetZoom();
+            });
+
+            // Touch events (Mobile/Tablet)
+            box.addEventListener('touchstart', (e: Event) => {
+              const te = e as TouchEvent;
+              if (te.touches && te.touches[0]) {
+                touchMoved = false;
+                updateZoom(te.touches[0].clientX, te.touches[0].clientY, 2.0);
+              }
+            }, { passive: true });
+
+            box.addEventListener('touchmove', (e: Event) => {
+              const te = e as TouchEvent;
+              if (te.touches && te.touches[0]) {
+                touchMoved = true;
+                updateZoom(te.touches[0].clientX, te.touches[0].clientY, 2.0);
+              }
+            }, { passive: true });
+
+            box.addEventListener('touchend', () => {
+              setTimeout(() => {
+                resetZoom();
+              }, 250);
+            });
+
+            box.addEventListener('touchcancel', () => {
+              resetZoom();
+            });
+
+            // Klik foto untuk buka di tab baru (jika tidak sedang menggeser sentuhan)
             img.addEventListener('click', () => {
-              const url = (img as HTMLElement).dataset.url;
+              if (touchMoved) return;
+              const url = img.dataset.url;
               if (url) openImageInNewTab(url);
             });
           });
