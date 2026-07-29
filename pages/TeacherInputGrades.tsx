@@ -59,19 +59,6 @@ const TeacherInputGrades: React.FC = () => {
   const [allAsmsData, setAllAsmsData] = useState<any[]>([]);
   const [allCpsData, setAllCpsData] = useState<any[]>([]);
 
-  // Keep preview filter default synced with form selection if not set explicitly
-  useEffect(() => {
-    if (selectedKelas && !previewFilterKelas) {
-      setPreviewFilterKelas(selectedKelas);
-    }
-  }, [selectedKelas]);
-
-  useEffect(() => {
-    if (semester && !previewFilterSemester) {
-      setPreviewFilterSemester(semester);
-    }
-  }, [semester]);
-
   // Fetch all lookup tables
   useEffect(() => {
     const st = db.getLocalTable<any>('data_siswa');
@@ -585,8 +572,14 @@ const TeacherInputGrades: React.FC = () => {
                   setSelectedStudentId('');
               }
           } else {
-              // Reset jika ganti kelas manual
-              setSelectedStudentId('');
+              // Cek apakah selectedStudentId saat ini ada di dalam list siswa yang baru diload
+              // Ini mencegah reset id siswa saat mode edit nilai dipanggil
+              setSelectedStudentId(prev => {
+                  if (prev && data.some(s => s.id === prev)) {
+                      return prev;
+                  }
+                  return '';
+              });
           }
       });
     } else {
@@ -671,6 +664,9 @@ const TeacherInputGrades: React.FC = () => {
 
     setStatus('saving');
     try {
+      const studentObj = students.find(s => s.id === selectedStudentId);
+      const studentName = studentObj ? studentObj.namalengkap : '';
+
       if (isEditMode && editingGradeId) {
         const allGrades = db.getLocalTable<any>('Nilai');
         const idx = allGrades.findIndex((item: any) => item.id === editingGradeId);
@@ -678,6 +674,7 @@ const TeacherInputGrades: React.FC = () => {
           allGrades[idx] = {
             ...allGrades[idx],
             student_id: selectedStudentId,
+            name_student: studentName,
             subject_type: savedSubjectType as any,
             score: parseInt(score),
             description: savedDescription,
@@ -713,6 +710,7 @@ const TeacherInputGrades: React.FC = () => {
       } else {
         await db.addGrade({ 
           student_id: selectedStudentId, 
+          name_student: studentName,
           subject_type: savedSubjectType as 'harian' | 'uts' | 'uas' | 'praktik', 
           score: parseInt(score), 
           description: savedDescription, 
@@ -991,6 +989,7 @@ const TeacherInputGrades: React.FC = () => {
             if (student && student.id) {
               await db.addGrade({ 
                 student_id: student.id, 
+                name_student: student.namalengkap,
                 subject_type: finalType as any, 
                 score: parseInt(rowNilai), 
                 description: finalDescription, 

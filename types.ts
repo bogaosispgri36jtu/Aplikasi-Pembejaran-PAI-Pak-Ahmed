@@ -32,6 +32,7 @@ export interface AttendanceRecord {
 export interface GradeRecord {
   id: string;
   student_id: string;
+  name_student?: string; // New field required by spreadsheet
   subject_type: 'harian' | 'uts' | 'uas' | 'praktik';
   score: number;
   description: string;

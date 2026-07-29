@@ -23,7 +23,7 @@
 // Konfigurasi Resmi 15 Sheet dan Header Kolom
 var SHEET_CONFIGS = {
   "data_siswa": ['id', 'nis', 'namalengkap', 'kelas', 'jeniskelamin'],
-  "Nilai": ['id', 'student_id', 'subject_type', 'score', 'description', 'kelas', 'semester', 'created_at'],
+  "Nilai": ['id', 'student_id', 'subject_type', 'name_student', 'score', 'description', 'kelas', 'semester', 'created_at'],
   "nilai_rapot": ['id', 'student_id', 'nama_siswa', 'nis', 'kelas', 'semester', 'sts', 'sas', 'sakit', 'izin', 'alpha', 'sikap', 'katrol', 'nilai_akhir', 'updated_at'],
   "kelola_nilai": ['id', 'student_id', 'nama_siswa', 'nis', 'kelas', 'semester', 'sts', 'sas', 'sakit', 'izin', 'alpha', 'sikap', 'katrol', 'nilai_akhir', 'updated_at'],
   "ujian": ['id', 'title', 'grade', 'category', 'semester', 'duration', 'deadline', 'is_random', 'status', 'created_at', 'tp_id', 'assessment_id'],
@@ -117,6 +117,7 @@ function doGet(e) {
     }
 
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var tz = ss.getSpreadsheetTimeZone();
     var sheet = getOrCreateSheet(ss, sheetName);
 
     var values = [];
@@ -129,22 +130,17 @@ function doGet(e) {
       }
     }
 
-    // Konversi tipe Date & String ISO ke format tanggal YYYY-MM-DD (tanpa jam/waktu)
+    // Konversi tipe Date ke format yang tepat menggunakan Timezone spreadsheet
     for (var i = 0; i < values.length; i++) {
       for (var j = 0; j < values[i].length; j++) {
         var val = values[i][j];
         if (val instanceof Date) {
-          var y = val.getFullYear();
-          var m = ('0' + (val.getMonth() + 1)).slice(-2);
-          var d = ('0' + val.getDate()).slice(-2);
-          values[i][j] = y + '-' + m + '-' + d;
-        } else if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
-          values[i][j] = val.split('T')[0];
-        } else if (values[0] && (values[0][j] === 'date' || values[0][j] === 'tanggal') && typeof val === 'string' && val) {
-          if (val.indexOf('T') !== -1) {
-            values[i][j] = val.split('T')[0];
-          } else if (val.indexOf(' ') !== -1 && /^\d{4}-\d{2}-\d{2}/.test(val)) {
-            values[i][j] = val.split(' ')[0];
+          // Format menggunakan timezone spreadsheet untuk mencegah shift hari
+          var formatted = Utilities.formatDate(val, tz, "yyyy-MM-dd'T'HH:mm:ss");
+          if (formatted.indexOf("T00:00:00") !== -1) {
+            values[i][j] = formatted.split('T')[0]; // Hanya tanggal
+          } else {
+            values[i][j] = formatted; // Beserta waktu
           }
         } else if (val === null || val === undefined) {
           values[i][j] = "";
@@ -211,14 +207,17 @@ function doPost(e) {
               // Jika data berupa objek/array (misal opsi soal/jawaban), ubah ke JSON string
               values[r][c] = JSON.stringify(val);
             } else if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
-              // Jika string berformat ISO Timestamp (misal: 2026-07-21T17:00:00.000Z), potong bagian waktunya
-              values[r][c] = val.split('T')[0];
+              // Tulis ISO string sebagai plain text agar Google Sheets & Apps Script tidak 
+              // diam-diam mengubah zona waktunya (timezone shift bug)
+              values[r][c] = "'" + val;
             } else if (values[0] && (values[0][c] === 'date' || values[0][c] === 'tanggal') && typeof val === 'string' && val) {
               // Jika kolom secara spesifik bernama 'date' atau 'tanggal'
               if (val.indexOf('T') !== -1) {
-                values[r][c] = val.split('T')[0];
+                values[r][c] = "'" + val.split('T')[0];
               } else if (val.indexOf(' ') !== -1 && /^\d{4}-\d{2}-\d{2}/.test(val)) {
-                values[r][c] = val.split(' ')[0];
+                values[r][c] = "'" + val.split(' ')[0];
+              } else {
+                values[r][c] = "'" + val; // Selalu amankan sebagai text
               }
             }
 

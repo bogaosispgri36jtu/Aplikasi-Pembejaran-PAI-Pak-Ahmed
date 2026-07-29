@@ -16,7 +16,7 @@ const TABS_CONFIG: SheetConfig[] = [
   { name: 'admin_users', headers: ['id', 'username', 'fullname', 'password', 'role', 'created_at'] },
   { name: 'admin user', headers: ['id', 'username', 'fullname', 'password', 'role', 'created_at'] },
   { name: 'data_siswa', headers: ['id', 'nis', 'namalengkap', 'kelas', 'jeniskelamin'] },
-  { name: 'Nilai', headers: ['id', 'student_id', 'subject_type', 'score', 'description', 'kelas', 'semester', 'created_at'] },
+  { name: 'Nilai', headers: ['id', 'student_id', 'subject_type', 'name_student', 'score', 'description', 'kelas', 'semester', 'created_at'] },
   { name: 'kehadiran', headers: ['id', 'student_id', 'nama_siswa', 'nis', 'kelas', 'date', 'status', 'semester'] },
   { name: 'data_TugasSiswa', headers: ['id', 'nisn', 'student_name', 'kelas', 'task_name', 'submission_type', 'content1', 'content2', 'content3', 'created_at'] },
   { name: 'materi_belajar', headers: ['id', 'title', 'description', 'grade', 'category', 'content_url', 'thumbnail', 'semester', 'kelas', 'tp_id', 'text_content'] },
@@ -410,15 +410,26 @@ class DatabaseService {
       })
     }, accessToken);
     
-    for (const cfg of TABS_CONFIG) {
-      await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z1?valueInputOption=USER_ENTERED`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          range: `${cfg.name}!A1:Z1`,
-          majorDimension: 'ROWS',
-          values: [cfg.headers]
-        })
-      }, accessToken);
+    const chunkedCreateTabs = [];
+    for (let i = 0; i < TABS_CONFIG.length; i += 5) {
+      chunkedCreateTabs.push(TABS_CONFIG.slice(i, i + 5));
+    }
+
+    for (const chunk of chunkedCreateTabs) {
+      await Promise.all(chunk.map(async (cfg) => {
+        try {
+          await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z1?valueInputOption=USER_ENTERED`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              range: `${cfg.name}!A1:Z1`,
+              majorDimension: 'ROWS',
+              values: [cfg.headers]
+            })
+          }, accessToken);
+        } catch (err) {
+          console.warn(`Gagal set header untuk ${cfg.name}:`, err);
+        }
+      }));
     }
     
     await this.setSpreadsheetId(spreadsheetId);
@@ -454,17 +465,28 @@ class DatabaseService {
         }, accessToken);
       }
 
-      for (const cfg of TABS_CONFIG) {
-        if (sheetsToInitHeaders.includes(cfg.name)) {
-          await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z1?valueInputOption=USER_ENTERED`, {
-            method: 'PUT',
-            body: JSON.stringify({
-              range: `${cfg.name}!A1:Z1`,
-              majorDimension: 'ROWS',
-              values: [cfg.headers]
-            })
-          }, accessToken);
-        }
+      const chunkedInitTabs = [];
+      for (let i = 0; i < TABS_CONFIG.length; i += 5) {
+        chunkedInitTabs.push(TABS_CONFIG.slice(i, i + 5));
+      }
+
+      for (const chunk of chunkedInitTabs) {
+        await Promise.all(chunk.map(async (cfg) => {
+          if (sheetsToInitHeaders.includes(cfg.name)) {
+            try {
+              await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z1?valueInputOption=USER_ENTERED`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                  range: `${cfg.name}!A1:Z1`,
+                  majorDimension: 'ROWS',
+                  values: [cfg.headers]
+                })
+              }, accessToken);
+            } catch (err) {
+              console.warn(`Gagal set header untuk ${cfg.name}:`, err);
+            }
+          }
+        }));
       }
     } catch (err: any) {
       console.error("Gagal menginisialisasi spreadsheet yang sudah ada:", err);
@@ -479,40 +501,57 @@ class DatabaseService {
       const appsScriptUrl = await this.getAppsScriptUrl();
       if (appsScriptUrl) {
         let hasError = false;
-        for (const cfg of TABS_CONFIG) {
-          const items = this.getLocalTable(cfg.name);
-          const values: any[][] = [cfg.headers];
-          
-          items.forEach((item: any) => {
-            const row = cfg.headers.map(header => {
-              const val = item[header];
-              if (val === undefined || val === null) return '';
-              if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
-              if (typeof val === 'object') return JSON.stringify(val);
-              return val;
-            });
-            values.push(row);
-          });
+        const students = this.getLocalTable<any>('data_siswa');
 
-          try {
-            const res = await fetch(appsScriptUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'text/plain'
-              },
-              body: JSON.stringify({
-                sheet: cfg.name,
-                values: values
-              })
+        const chunkedTabs = [];
+        for (let i = 0; i < TABS_CONFIG.length; i += 5) {
+          chunkedTabs.push(TABS_CONFIG.slice(i, i + 5));
+        }
+
+        for (const chunk of chunkedTabs) {
+          await Promise.all(chunk.map(async (cfg) => {
+            const items = this.getLocalTable(cfg.name);
+            const values: any[][] = [cfg.headers];
+            
+            items.forEach((item: any) => {
+              // Populate name_student for Nilai if missing
+              if (cfg.name === 'Nilai' && (!item.name_student || item.name_student === '')) {
+                const student = students.find((s: any) => s.id === item.student_id);
+                if (student) {
+                  item.name_student = student.namalengkap;
+                }
+              }
+
+              const row = cfg.headers.map(header => {
+                const val = item[header];
+                if (val === undefined || val === null) return '';
+                if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
+                if (typeof val === 'object') return JSON.stringify(val);
+                return val;
+              });
+              values.push(row);
             });
-            if (!res.ok) {
-              console.warn(`Koneksi ke Apps Script untuk tabel ${cfg.name} memberikan status HTTP ${res.status}`);
+
+            try {
+              const res = await fetch(appsScriptUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'text/plain'
+                },
+                body: JSON.stringify({
+                  sheet: cfg.name,
+                  values: values
+                })
+              });
+              if (!res.ok) {
+                console.warn(`Koneksi ke Apps Script untuk tabel ${cfg.name} memberikan status HTTP ${res.status}`);
+                hasError = true;
+              }
+            } catch (tabErr) {
+              console.warn(`Gagal menyinkronkan tabel ${cfg.name} via Apps Script:`, tabErr);
               hasError = true;
             }
-          } catch (tabErr) {
-            console.warn(`Gagal menyinkronkan tabel ${cfg.name} via Apps Script:`, tabErr);
-            hasError = true;
-          }
+          }));
         }
         if (!hasError) {
           this.setSyncStatus('success', 'Seluruh data berhasil disinkronkan ke Google Sheets.');
@@ -530,11 +569,21 @@ class DatabaseService {
 
       await this.initializeExistingSpreadsheet(spreadsheetId, token);
 
+      const students = this.getLocalTable<any>('data_siswa');
+
       for (const cfg of TABS_CONFIG) {
         const items = this.getLocalTable(cfg.name);
         const values: any[][] = [cfg.headers];
         
         items.forEach((item: any) => {
+          // Populate name_student for Nilai if missing
+          if (cfg.name === 'Nilai' && (!item.name_student || item.name_student === '')) {
+            const student = students.find((s: any) => s.id === item.student_id);
+            if (student) {
+              item.name_student = student.namalengkap;
+            }
+          }
+
           const row = cfg.headers.map(header => {
             const val = item[header];
             if (val === undefined || val === null) return '';
@@ -573,7 +622,16 @@ class DatabaseService {
         const items = this.getLocalTable(cfg.name);
         const values: any[][] = [cfg.headers];
         
+        const students = cfg.name === 'Nilai' ? this.getLocalTable<any>('data_siswa') : [];
+
         items.forEach((item: any) => {
+          if (cfg.name === 'Nilai' && (!item.name_student || item.name_student === '')) {
+            const student = students.find((s: any) => s.id === item.student_id);
+            if (student) {
+              item.name_student = student.namalengkap;
+            }
+          }
+
           const row = cfg.headers.map(header => {
             const val = item[header];
             if (val === undefined || val === null) return '';
@@ -647,7 +705,16 @@ class DatabaseService {
       const items = this.getLocalTable(cfg.name);
       const values: any[][] = [cfg.headers];
       
+      const students = cfg.name === 'Nilai' ? this.getLocalTable<any>('data_siswa') : [];
+
       items.forEach((item: any) => {
+        if (cfg.name === 'Nilai' && (!item.name_student || item.name_student === '')) {
+          const student = students.find((s: any) => s.id === item.student_id);
+          if (student) {
+            item.name_student = student.namalengkap;
+          }
+        }
+
         const row = cfg.headers.map(header => {
           const val = item[header];
           if (val === undefined || val === null) return '';
@@ -692,51 +759,58 @@ class DatabaseService {
     try {
       const appsScriptUrl = await this.getAppsScriptUrl();
       if (appsScriptUrl) {
-        for (const cfg of TABS_CONFIG) {
-          try {
-            const res = await fetch(`${appsScriptUrl}?sheet=${encodeURIComponent(cfg.name)}`, { method: 'GET' });
-            if (res.ok) {
-              const json = await res.json();
-              const rows: any[][] = json.values || [];
-              if (rows.length > 1) {
-                const headers = rows[0];
-                const items: any[] = [];
-                for (let i = 1; i < rows.length; i++) {
-                  const row = rows[i];
-                  if (row.length === 0 || !row[0]) continue;
-                  const obj: any = {};
-                  headers.forEach((header, colIdx) => {
-                    let cellVal = row[colIdx];
-                    if (cellVal === undefined || cellVal === null) cellVal = '';
-                    
-                    if (typeof cellVal === 'string' && (cellVal.startsWith('[') || cellVal.startsWith('{'))) {
-                      try {
-                        cellVal = JSON.parse(cellVal);
-                      } catch (_) {}
-                    }
-                    const canonicalKey = this.getCanonicalHeader(header, cfg.headers);
-                    if (canonicalKey) {
-                      if (canonicalKey === 'date' || canonicalKey === 'tanggal') {
-                        cellVal = formatDateOnly(cellVal);
+        const chunkedTabs = [];
+        for (let i = 0; i < TABS_CONFIG.length; i += 5) {
+          chunkedTabs.push(TABS_CONFIG.slice(i, i + 5));
+        }
+
+        for (const chunk of chunkedTabs) {
+          await Promise.all(chunk.map(async (cfg) => {
+            try {
+              const res = await fetch(`${appsScriptUrl}?sheet=${encodeURIComponent(cfg.name)}`, { method: 'GET' });
+              if (res.ok) {
+                const json = await res.json();
+                const rows: any[][] = json.values || [];
+                if (rows.length > 1) {
+                  const headers = rows[0];
+                  const items: any[] = [];
+                  for (let i = 1; i < rows.length; i++) {
+                    const row = rows[i];
+                    if (row.length === 0 || !row[0]) continue;
+                    const obj: any = {};
+                    headers.forEach((header, colIdx) => {
+                      let cellVal = row[colIdx];
+                      if (cellVal === undefined || cellVal === null) cellVal = '';
+                      
+                      if (typeof cellVal === 'string' && (cellVal.startsWith('[') || cellVal.startsWith('{'))) {
+                        try {
+                          cellVal = JSON.parse(cellVal);
+                        } catch (_) {}
                       }
-                      obj[canonicalKey] = cellVal;
-                    }
-                  });
-                  items.push(obj);
-                }
-                this.setLocalTable(cfg.name, items);
-              } else {
-                const existingLocal = this.getLocalTable(cfg.name);
-                if (existingLocal && existingLocal.length > 0) {
-                  this.syncTableToGoogleSheets(cfg.name).catch(() => {});
+                      const canonicalKey = this.getCanonicalHeader(header, cfg.headers);
+                      if (canonicalKey) {
+                        if (canonicalKey === 'date' || canonicalKey === 'tanggal') {
+                          cellVal = formatDateOnly(cellVal);
+                        }
+                        obj[canonicalKey] = cellVal;
+                      }
+                    });
+                    items.push(obj);
+                  }
+                  this.setLocalTable(cfg.name, items);
                 } else {
-                  this.setLocalTable(cfg.name, []);
+                  const existingLocal = this.getLocalTable(cfg.name);
+                  if (existingLocal && existingLocal.length > 0) {
+                    this.syncTableToGoogleSheets(cfg.name).catch(() => {});
+                  } else {
+                    this.setLocalTable(cfg.name, []);
+                  }
                 }
               }
+            } catch (e) {
+              console.warn(`Gagal menarik data ${cfg.name} via Apps Script:`, e);
             }
-          } catch (e) {
-            console.warn(`Gagal menarik data ${cfg.name} via Apps Script:`, e);
-          }
+          }));
         }
         return;
       }
@@ -754,49 +828,56 @@ class DatabaseService {
         try {
           await this.initializeExistingSpreadsheet(spreadsheetId, token);
 
-          for (const cfg of TABS_CONFIG) {
-            const res = await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000`, { method: 'GET' }, token);
-            const rows: any[][] = res.values || [];
-            if (rows.length <= 1) {
-              const existingLocal = this.getLocalTable(cfg.name);
-              if (existingLocal && existingLocal.length > 0) {
-                this.syncTableToGoogleSheets(cfg.name, token).catch(() => {});
-              } else {
-                this.setLocalTable(cfg.name, []);
-              }
-              continue;
-            }
-            
-            const headers = rows[0];
-            const items: any[] = [];
-            
-            for (let i = 1; i < rows.length; i++) {
-              const row = rows[i];
-              if (row.length === 0 || !row[0]) continue;
-              
-              const obj: any = {};
-              headers.forEach((header, colIdx) => {
-                let cellVal = row[colIdx];
-                if (cellVal === undefined || cellVal === null) cellVal = '';
-                
-                if (typeof cellVal === 'string' && (cellVal.startsWith('[') || cellVal.startsWith('{'))) {
-                  try {
-                    cellVal = JSON.parse(cellVal);
-                  } catch (_) {}
-                }
-                const canonicalKey = this.getCanonicalHeader(header, cfg.headers);
-                if (canonicalKey) {
-                  if (canonicalKey === 'date' || canonicalKey === 'tanggal') {
-                    cellVal = formatDateOnly(cellVal);
-                  }
-                  obj[canonicalKey] = cellVal;
-                }
-              });
-              
-              items.push(obj);
-            }
+          const chunkedTabsREST = [];
+          for (let i = 0; i < TABS_CONFIG.length; i += 5) {
+            chunkedTabsREST.push(TABS_CONFIG.slice(i, i + 5));
+          }
 
-            this.setLocalTable(cfg.name, items);
+          for (const chunk of chunkedTabsREST) {
+            await Promise.all(chunk.map(async (cfg) => {
+              const res = await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000`, { method: 'GET' }, token);
+              const rows: any[][] = res.values || [];
+              if (rows.length <= 1) {
+                const existingLocal = this.getLocalTable(cfg.name);
+                if (existingLocal && existingLocal.length > 0) {
+                  this.syncTableToGoogleSheets(cfg.name, token).catch(() => {});
+                } else {
+                  this.setLocalTable(cfg.name, []);
+                }
+                return;
+              }
+              
+              const headers = rows[0];
+              const items: any[] = [];
+              
+              for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.length === 0 || !row[0]) continue;
+                
+                const obj: any = {};
+                headers.forEach((header, colIdx) => {
+                  let cellVal = row[colIdx];
+                  if (cellVal === undefined || cellVal === null) cellVal = '';
+                  
+                  if (typeof cellVal === 'string' && (cellVal.startsWith('[') || cellVal.startsWith('{'))) {
+                    try {
+                      cellVal = JSON.parse(cellVal);
+                    } catch (_) {}
+                  }
+                  const canonicalKey = this.getCanonicalHeader(header, cfg.headers);
+                  if (canonicalKey) {
+                    if (canonicalKey === 'date' || canonicalKey === 'tanggal') {
+                      cellVal = formatDateOnly(cellVal);
+                    }
+                    obj[canonicalKey] = cellVal;
+                  }
+                });
+                
+                items.push(obj);
+              }
+
+              this.setLocalTable(cfg.name, items);
+            }));
           }
           fetchedViaREST = true;
           console.log("Berhasil menyinkronkan seluruh tabel dari Google Sheets melalui REST API.");
@@ -808,54 +889,61 @@ class DatabaseService {
       // Fallback ke GViz Public REST API jika belum berhasil ditarik via REST API atau tidak memiliki token
       if (!fetchedViaREST) {
         console.log("Menarik data database spreadsheet menggunakan Google Visualization API (Public Fallback)...");
-        for (const cfg of TABS_CONFIG) {
-          try {
-            const publicRes = await fetch(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(cfg.name)}`);
-            if (publicRes.ok) {
-              const txt = await publicRes.text();
-              const match = txt.match(/google\.visualization\.Query\.setResponse\(([\s\S]*?)\);/);
-              if (match) {
-                const json = JSON.parse(match[1]);
-                if (json.table && json.table.rows) {
-                  const cols = json.table.cols || [];
-                  const headers = cols.map((c: any) => c.label || '').filter(Boolean);
-                  const activeHeaders = headers.length > 0 ? headers : cfg.headers;
+        const chunkedTabsGViz = [];
+        for (let i = 0; i < TABS_CONFIG.length; i += 5) {
+          chunkedTabsGViz.push(TABS_CONFIG.slice(i, i + 5));
+        }
 
-                  const items: any[] = [];
-                  json.table.rows.forEach((row: any) => {
-                    const obj: any = {};
-                    if (row.c) {
-                      row.c.forEach((cell: any, idx: number) => {
-                        const key = activeHeaders[idx];
-                        if (key) {
-                          let val = cell ? cell.v : null;
-                          if (val === null || val === undefined) val = '';
-                          
-                          if (typeof val === 'string' && (val.startsWith('[') || val.startsWith('{'))) {
-                            try {
-                              val = JSON.parse(val);
-                            } catch (_) {}
-                          }
-                          const canonicalKey = this.getCanonicalHeader(key, cfg.headers);
-                          if (canonicalKey) {
-                            obj[canonicalKey] = val;
-                          }
-                        }
-                      });
-                    }
-                    // Filter row-row kosong
-                    if (Object.keys(obj).length > 0 && (obj.id || obj.nis || obj.nisn || obj.title || obj.code || obj.name || obj.tpId)) {
-                      items.push(obj);
-                    }
-                  });
+        for (const chunk of chunkedTabsGViz) {
+          await Promise.all(chunk.map(async (cfg) => {
+            try {
+              const publicRes = await fetch(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(cfg.name)}`);
+              if (publicRes.ok) {
+                const txt = await publicRes.text();
+                const match = txt.match(/google\.visualization\.Query\.setResponse\(([\s\S]*?)\);/);
+                if (match) {
+                  const json = JSON.parse(match[1]);
+                  if (json.table && json.table.rows) {
+                    const cols = json.table.cols || [];
+                    const headers = cols.map((c: any) => c.label || '').filter(Boolean);
+                    const activeHeaders = headers.length > 0 ? headers : cfg.headers;
 
-                  this.setLocalTable(cfg.name, items);
+                    const items: any[] = [];
+                    json.table.rows.forEach((row: any) => {
+                      const obj: any = {};
+                      if (row.c) {
+                        row.c.forEach((cell: any, idx: number) => {
+                          const key = activeHeaders[idx];
+                          if (key) {
+                            let val = cell ? cell.v : null;
+                            if (val === null || val === undefined) val = '';
+                            
+                            if (typeof val === 'string' && (val.startsWith('[') || val.startsWith('{'))) {
+                              try {
+                                val = JSON.parse(val);
+                              } catch (_) {}
+                            }
+                            const canonicalKey = this.getCanonicalHeader(key, cfg.headers);
+                            if (canonicalKey) {
+                              obj[canonicalKey] = val;
+                            }
+                          }
+                        });
+                      }
+                      // Filter row-row kosong
+                      if (Object.keys(obj).length > 0 && (obj.id || obj.nis || obj.nisn || obj.title || obj.code || obj.name || obj.tpId)) {
+                        items.push(obj);
+                      }
+                    });
+
+                    this.setLocalTable(cfg.name, items);
+                  }
                 }
               }
+            } catch (ePublic) {
+              console.warn(`Gagal menarik data ${cfg.name} via GViz Public fallback:`, ePublic);
             }
-          } catch (ePublic) {
-            console.warn(`Gagal menarik data ${cfg.name} via GViz Public fallback:`, ePublic);
-          }
+          }));
         }
       }
     } finally {

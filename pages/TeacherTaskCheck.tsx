@@ -34,6 +34,7 @@ const TeacherTaskCheck: React.FC = () => {
   const [filterGrade, setFilterGrade] = useState<GradeLevel | 'all'>('all');
   const [filterClass, setFilterClass] = useState<string>('all');
   const [filterSemester, setFilterSemester] = useState<string>('all'); // Sekarang untuk KEDUA Tab
+  const [searchQuery, setSearchQuery] = useState('');
   
   const [availableClasses, setAvailableClasses] = useState<string[]>([]);
 
@@ -490,7 +491,16 @@ const TeacherTaskCheck: React.FC = () => {
         });
     }
 
-    // 3. LOGIKA SORTING DINAMIS (SESUAI PERMINTAAN)
+    // 3. Filter Pencarian Nama Siswa
+    if (searchQuery.trim() !== '') {
+        const query = searchQuery.toLowerCase().trim();
+        data = data.filter((item: any) => {
+            const name = (item.student_name || '').toLowerCase();
+            return name.includes(query);
+        });
+    }
+
+    // 4. LOGIKA SORTING DINAMIS (SESUAI PERMINTAAN)
     
     if (filterClass === 'all') {
         // JIKA FILTER = SEMUA JENJANG / SEMUA KELAS
@@ -560,7 +570,19 @@ const TeacherTaskCheck: React.FC = () => {
       </div>
       
       {/* FILTER AREA */}
-      <div className="flex flex-col md:flex-row gap-2 overflow-x-auto pb-2 md:pb-0">
+      <div className="flex flex-col md:flex-row flex-wrap gap-2 overflow-x-auto pb-2 md:pb-0">
+          {/* 0. Search by Name */}
+          <div className="relative shrink-0 flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+            <input
+              type="text"
+              placeholder="Cari nama siswa..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold border border-slate-200 bg-white text-slate-700 outline-none focus:border-emerald-500 transition-all placeholder:font-medium placeholder:normal-case"
+            />
+          </div>
+
           {/* 1. Filter Jenjang */}
           <div className="flex gap-1.5 shrink-0">
             {(['all', '7', '8', '9'] as const).map((g) => (
