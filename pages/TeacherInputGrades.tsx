@@ -158,10 +158,28 @@ const TeacherInputGrades: React.FC = () => {
     return { tpText, tugasText };
   };
 
+  const uniqueTugasInPreview = React.useMemo(() => {
+    const tugasSet = new Set<string>();
+    previewGrades.forEach(g => {
+      if (previewFilterTp) {
+        const { tpText } = getTpAndTugasText(g);
+        if (tpText !== previewFilterTp) return;
+      }
+      const { tugasText } = getTpAndTugasText(g);
+      if (tugasText && tugasText !== '-') {
+        tugasSet.add(tugasText);
+      }
+    });
+    return Array.from(tugasSet).sort();
+  }, [previewGrades, allAsmsData, allTpsData, previewFilterTp]);
+
   const uniqueTpsInPreview = React.useMemo(() => {
     const tpSet = new Set<string>();
     previewGrades.forEach(g => {
-      if (previewFilterType && g.subject_type !== previewFilterType) return;
+      if (previewFilterType) {
+        const { tugasText } = getTpAndTugasText(g);
+        if (tugasText !== previewFilterType) return;
+      }
       const { tpText } = getTpAndTugasText(g);
       if (tpText && tpText !== '-') {
         tpSet.add(tpText);
@@ -172,7 +190,10 @@ const TeacherInputGrades: React.FC = () => {
 
   // Filter preview grades by search query (student name or NIS), TP, and Type
   const filteredDisplayGrades = previewGrades.filter((g: any) => {
-    if (previewFilterType && g.subject_type !== previewFilterType) return false;
+    if (previewFilterType) {
+      const { tugasText } = getTpAndTugasText(g);
+      if (tugasText !== previewFilterType) return false;
+    }
     
     if (previewFilterTp) {
       const { tpText } = getTpAndTugasText(g);
@@ -1392,10 +1413,11 @@ const TeacherInputGrades: React.FC = () => {
                   style={{ backgroundImage: 'none' }}
                 >
                   <option value="">Semua</option>
-                  <option value="harian">Harian</option>
-                  <option value="uts">STS</option>
-                  <option value="uas">SAS</option>
-                  <option value="praktik">Praktik</option>
+                  {uniqueTugasInPreview.map((tugas) => (
+                    <option key={tugas} value={tugas}>
+                      {tugas}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
