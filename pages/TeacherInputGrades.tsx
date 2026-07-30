@@ -52,6 +52,8 @@ const TeacherInputGrades: React.FC = () => {
   const [previewFilterKelas, setPreviewFilterKelas] = useState('');
   const [previewFilterSemester, setPreviewFilterSemester] = useState('');
   const [previewSearchQuery, setPreviewSearchQuery] = useState('');
+  const [previewFilterType, setPreviewFilterType] = useState('');
+  const [previewFilterTp, setPreviewFilterTp] = useState('');
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
 
   const [allStudentsData, setAllStudentsData] = useState<any[]>([]);
@@ -93,17 +95,6 @@ const TeacherInputGrades: React.FC = () => {
 
     return () => clearTimeout(timer);
   }, [previewFilterKelas, previewFilterSemester, status]);
-
-  // Filter preview grades by search query (student name or NIS)
-  const filteredDisplayGrades = previewGrades.filter((g: any) => {
-    if (!previewSearchQuery.trim()) return true;
-    const stObj = allStudentsData.find((s: any) => s.id === g.student_id || s.nis === g.student_id) ||
-                  students.find((s: any) => s.id === g.student_id || s.nis === g.student_id);
-    const studentName = (stObj?.namalengkap || g.student_name || g.nama_siswa || g.student_id || '').toLowerCase();
-    const studentNis = String(stObj?.nis || g.nis || '').toLowerCase();
-    const q = previewSearchQuery.toLowerCase().trim();
-    return studentName.includes(q) || studentNis.includes(q);
-  });
 
   // Helper to extract clean TP and Tugas text without showing IDs
   const getTpAndTugasText = (g: any) => {
@@ -166,6 +157,36 @@ const TeacherInputGrades: React.FC = () => {
 
     return { tpText, tugasText };
   };
+
+  const uniqueTpsInPreview = React.useMemo(() => {
+    const tpSet = new Set<string>();
+    previewGrades.forEach(g => {
+      if (previewFilterType && g.subject_type !== previewFilterType) return;
+      const { tpText } = getTpAndTugasText(g);
+      if (tpText && tpText !== '-') {
+        tpSet.add(tpText);
+      }
+    });
+    return Array.from(tpSet).sort();
+  }, [previewGrades, allAsmsData, allTpsData, previewFilterType]);
+
+  // Filter preview grades by search query (student name or NIS), TP, and Type
+  const filteredDisplayGrades = previewGrades.filter((g: any) => {
+    if (previewFilterType && g.subject_type !== previewFilterType) return false;
+    
+    if (previewFilterTp) {
+      const { tpText } = getTpAndTugasText(g);
+      if (tpText !== previewFilterTp) return false;
+    }
+
+    if (!previewSearchQuery.trim()) return true;
+    const stObj = allStudentsData.find((s: any) => s.id === g.student_id || s.nis === g.student_id) ||
+                  students.find((s: any) => s.id === g.student_id || s.nis === g.student_id);
+    const studentName = (stObj?.namalengkap || g.student_name || g.nama_siswa || g.student_id || '').toLowerCase();
+    const studentNis = String(stObj?.nis || g.nis || '').toLowerCase();
+    const q = previewSearchQuery.toLowerCase().trim();
+    return studentName.includes(q) || studentNis.includes(q);
+  });
 
   // Cancel edit helper
   const handleCancelEdit = () => {
@@ -1271,64 +1292,113 @@ const TeacherInputGrades: React.FC = () => {
           </div>
 
           {/* FILTERS & SEARCH BAR BARIS DIBAWAH JUDUL */}
-          <div className="flex flex-wrap items-center gap-2.5 pt-1">
-            {/* 1. Kolom Pencarian (Search Bar) */}
-            <div className="relative flex-1 min-w-[180px] sm:max-w-xs">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Cari nama siswa / NIS..."
-                value={previewSearchQuery}
-                onChange={(e) => setPreviewSearchQuery(e.target.value)}
-                className="w-full pl-7 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition"
-              />
-              {previewSearchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setPreviewSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+          <div className="flex flex-col gap-2 pt-1 pb-1 w-full">
+            {/* Row 1: Pencarian & Jumlah Data */}
+            <div className="flex items-center justify-between gap-2 w-full">
+              {/* 1. Kolom Pencarian (Search Bar) */}
+              <div className="relative flex-1">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Cari..."
+                  value={previewSearchQuery}
+                  onChange={(e) => setPreviewSearchQuery(e.target.value)}
+                  className="w-full pl-7 pr-6 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500 transition"
+                />
+                {previewSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[10px] font-bold"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              {/* 6. Hasil Jumlah Data */}
+              <div className="flex shrink-0">
+                <span className="px-2 py-1 rounded-lg text-[9px] font-black bg-emerald-100 text-emerald-800 whitespace-nowrap">
+                  {filteredDisplayGrades.length} / {previewGrades.length} Data
+                </span>
+              </div>
+            </div>
+
+            {/* Row 2: Semester & Kelas */}
+            <div className="flex items-center gap-2 w-full">
+              {/* 2. Filter Semester */}
+              <div className="flex flex-1 items-center justify-start gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+                <span className="text-[9px] font-bold text-slate-500 whitespace-nowrap">Semester :</span>
+                <select
+                  value={previewFilterSemester}
+                  onChange={(e) => setPreviewFilterSemester(e.target.value)}
+                  className="bg-transparent text-[10px] font-normal text-slate-700 focus:outline-none cursor-pointer w-full text-left appearance-none"
+                  style={{ backgroundImage: 'none' }}
                 >
-                  ×
-                </button>
-              )}
+                  <option value="">Semua</option>
+                  <option value="1">Semester 1</option>
+                  <option value="2">Semester 2</option>
+                </select>
+              </div>
+
+              {/* 3. Filter Kelas */}
+              <div className="flex flex-1 items-center justify-start gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+                <span className="text-[9px] flex items-center gap-1 font-bold text-slate-500 whitespace-nowrap">
+                  <Filter size={10} className="text-slate-400" /> Kelas :
+                </span>
+                <select
+                  value={previewFilterKelas}
+                  onChange={(e) => setPreviewFilterKelas(e.target.value)}
+                  className="bg-transparent text-[10px] font-normal text-slate-700 focus:outline-none cursor-pointer w-full text-left appearance-none"
+                  style={{ backgroundImage: 'none' }}
+                >
+                  <option value="">Semua</option>
+                  <option value="all">Semua Kelas</option>
+                  {allClassesList.map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            {/* 2. Filter Semester */}
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
-              <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">Sem:</span>
-              <select
-                value={previewFilterSemester}
-                onChange={(e) => setPreviewFilterSemester(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
-              >
-                <option value="">Semua</option>
-                <option value="1">Sem 1</option>
-                <option value="2">Sem 2</option>
-              </select>
-            </div>
+            {/* Row 3: TP & Jenis Tugas */}
+            <div className="flex items-center gap-2 w-full">
+              {/* 4. Filter TP */}
+              <div className="flex flex-1 items-center justify-start gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 overflow-hidden">
+                <span className="text-[9px] font-bold text-slate-500 whitespace-nowrap">TP :</span>
+                <select
+                  value={previewFilterTp}
+                  onChange={(e) => setPreviewFilterTp(e.target.value)}
+                  className="bg-transparent text-[10px] font-normal text-slate-700 focus:outline-none cursor-pointer w-full text-left appearance-none truncate"
+                  style={{ backgroundImage: 'none' }}
+                >
+                  <option value="">Semua</option>
+                  {uniqueTpsInPreview.map((tp) => (
+                    <option key={tp} value={tp}>
+                      {tp}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            {/* 3. Filter Kelas */}
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
-              <Filter size={12} className="text-slate-400" />
-              <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">Kelas:</span>
-              <select
-                value={previewFilterKelas}
-                onChange={(e) => setPreviewFilterKelas(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
-              >
-                <option value="">Semua Kelas</option>
-                {allClassesList.map((k) => (
-                  <option key={k} value={k}>
-                    Kelas {k}
-                  </option>
-                ))}
-              </select>
+              {/* 5. Filter Jenis Tugas */}
+              <div className="flex flex-1 items-center justify-start gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 overflow-hidden">
+                <span className="text-[9px] font-bold text-slate-500 whitespace-nowrap">Tugas :</span>
+                <select
+                  value={previewFilterType}
+                  onChange={(e) => setPreviewFilterType(e.target.value)}
+                  className="bg-transparent text-[10px] font-normal text-slate-700 focus:outline-none cursor-pointer w-full text-left appearance-none truncate"
+                  style={{ backgroundImage: 'none' }}
+                >
+                  <option value="">Semua</option>
+                  <option value="harian">Harian</option>
+                  <option value="uts">STS</option>
+                  <option value="uas">SAS</option>
+                  <option value="praktik">Praktik</option>
+                </select>
+              </div>
             </div>
-
-            {/* 4. Hasil Jumlah Data */}
-            <span className="px-3 py-1.5 rounded-xl text-xs font-black bg-emerald-100 text-emerald-800 whitespace-nowrap ml-auto">
-              {filteredDisplayGrades.length} / {previewGrades.length} Data
-            </span>
           </div>
         </div>
 
