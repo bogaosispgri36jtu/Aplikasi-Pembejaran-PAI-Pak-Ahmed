@@ -392,6 +392,62 @@ const TeacherStudents: React.FC = () => {
     return matchesSearch && matchesKelas;
   });
 
+  // Export filtered students data to Excel file
+  const handleExportExcel = () => {
+    if (filteredStudents.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Data Kosong',
+        text: 'Tidak ada data siswa yang sesuai dengan filter/pencarian saat ini untuk dieksport.',
+        confirmButtonColor: '#059669',
+        heightAuto: false
+      });
+      return;
+    }
+
+    const exportRows = filteredStudents.map((s, idx) => {
+      const isPerempuan = s.jeniskelamin ? s.jeniskelamin.toUpperCase().startsWith('P') : false;
+      return {
+        'NO': idx + 1,
+        'ID SISWA': s.id || '-',
+        'NIS': s.nis || '-',
+        'NAMA LENGKAP': s.namalengkap || '-',
+        'KELAS': s.kelas || '-',
+        'JENIS KELAMIN': isPerempuan ? 'Perempuan' : 'Laki-laki'
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+
+    // Auto-fit column widths
+    worksheet['!cols'] = [
+      { wch: 6 },  // NO
+      { wch: 20 }, // ID SISWA
+      { wch: 15 }, // NIS
+      { wch: 32 }, // NAMA LENGKAP
+      { wch: 12 }, // KELAS
+      { wch: 16 }  // JENIS KELAMIN
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Data Siswa');
+
+    const klsStr = selectedKelas === 'Semua' ? 'Semua_Kelas' : `Kelas_${selectedKelas}`;
+    const fileName = `Arsip_Data_Siswa_${klsStr}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    XLSX.writeFile(workbook, fileName);
+
+    Swal.fire({
+      icon: 'success',
+      title: 'Export Berhasil!',
+      text: `${filteredStudents.length} data siswa terfilter berhasil dieksport ke file Excel.`,
+      confirmButtonColor: '#059669',
+      timer: 2000,
+      showConfirmButton: false,
+      heightAuto: false
+    });
+  };
+
   // Pagination calculation
   const totalItems = filteredStudents.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
@@ -677,6 +733,17 @@ const TeacherStudents: React.FC = () => {
           
           {/* FILTERS */}
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* BUTTON EXPORT EXCEL */}
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm transition-all active:scale-95 shrink-0"
+              title="Export data siswa yang difilter ke file Excel"
+            >
+              <FileSpreadsheet size={14} />
+              <span>Export Excel</span>
+            </button>
+
             {/* LIMIT SISWA PER HALAMAN */}
             <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-100 shadow-sm">
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Tampilkan:</span>

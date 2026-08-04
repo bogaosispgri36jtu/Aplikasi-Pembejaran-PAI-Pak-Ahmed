@@ -132,58 +132,6 @@ const TeacherSettings: React.FC = () => {
     }
   };
 
-  const handleClearSyncCache = async () => {
-    const confirm = await Swal.fire({
-      title: 'Bersihkan Cache Sinkronisasi?',
-      text: 'Aplikasi akan menghapus cache lokal dan memaksa memuat ulang data paling segar langsung dari Google Sheets. Lanjutkan?',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#059669',
-      cancelButtonColor: '#64748b',
-      confirmButtonText: 'Ya, Bersihkan & Muat Ulang',
-      cancelButtonText: 'Batal',
-      heightAuto: false
-    });
-
-    if (!confirm.isConfirmed) return;
-
-    setIsSyncing(true);
-    Swal.fire({
-      title: 'Membersihkan Cache...',
-      text: 'Menghapus cache lokal & mengambil data segar dari Google Sheets...',
-      didOpen: () => Swal.showLoading(),
-      allowOutsideClick: false,
-      heightAuto: false
-    });
-
-    try {
-      await db.clearSyncCacheAndPull();
-      Swal.close();
-      setTimeout(() => {
-        Swal.fire({
-          icon: 'success',
-          title: 'Cache Sinkronisasi Dibersihkan!',
-          text: 'Data lokal telah diperbarui sepenuhnya sesuai data terbaru di Google Sheets.',
-          confirmButtonColor: '#059669',
-          heightAuto: false
-        });
-      }, 150);
-    } catch (err: any) {
-      Swal.close();
-      setTimeout(() => {
-        Swal.fire({
-          icon: 'error',
-          title: 'Gagal Memuat Data',
-          text: err.message || 'Terjadi kesalahan saat memuat ulang data dari Google Sheets.',
-          confirmButtonColor: '#dc2626',
-          heightAuto: false
-        });
-      }, 150);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   const secureReset = async (type: 'absensi' | 'nilai' | 'tugas' | 'siswa' | 'materi' | 'ujian' | 'bank_soal' | 'hasil_ujian' | 'tujuan_pembelajaran' | 'asesmen_tp' | 'semua') => {
     const labels = { 
       absensi: 'Absensi', 
@@ -444,19 +392,6 @@ const TeacherSettings: React.FC = () => {
                         <Trash2 size={12} />
                       </button>
                     )}
-                  </div>
-
-                  {/* TOMBOL BERSIHKAN CACHE SINKRONASI */}
-                  <div className="pt-3 border-t border-slate-100 space-y-2">
-                    <button
-                      onClick={handleClearSyncCache}
-                      disabled={isSyncing}
-                      className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
-                      title="Bersihkan cache sinkronisasi dan paksa muat ulang data terbaru dari Google Sheets"
-                    >
-                      <Trash2 size={13} />
-                      <span>Bersihkan Cache Sinkronisasi</span>
-                    </button>
                   </div>
                 </div>
 

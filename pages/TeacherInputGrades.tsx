@@ -209,6 +209,80 @@ const TeacherInputGrades: React.FC = () => {
     return studentName.includes(q) || studentNis.includes(q);
   });
 
+  // Function to export filtered grade preview data to Excel
+  const handleExportToExcel = () => {
+    if (filteredDisplayGrades.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Data Kosong',
+        text: 'Tidak ada data nilai yang sesuai dengan filter saat ini untuk dieksport.',
+        confirmButtonColor: '#059669',
+        heightAuto: false
+      });
+      return;
+    }
+
+    const exportRows = filteredDisplayGrades.map((g: any, idx: number) => {
+      const stObj = allStudentsData.find((s: any) => s.id === g.student_id || s.nis === g.student_id) ||
+                    students.find((s: any) => s.id === g.student_id || s.nis === g.student_id);
+      const studentName = stObj?.namalengkap || g.student_name || g.nama_siswa || g.student_id || '-';
+      const studentNis = stObj?.nis || g.nis || '-';
+      const typeLabel = 
+        g.subject_type === 'uts' ? 'STS' :
+        g.subject_type === 'uas' ? 'SAS' :
+        g.subject_type === 'praktik' ? 'Praktik' : 'Harian';
+      const { tpText, tugasText } = getTpAndTugasText(g);
+
+      return {
+        'NO': idx + 1,
+        'NAMA SISWA': studentName,
+        'NIS': studentNis,
+        'KELAS': g.kelas || selectedKelas || '-',
+        'SEMESTER': g.semester ? `Semester ${g.semester}` : 'Semester 1',
+        'JENIS TUGAS': typeLabel,
+        'TUJUAN PEMBELAJARAN (TP)': tpText,
+        'TUGAS': tugasText,
+        'NILAI': Number(g.score) || 0,
+        'TANGGAL INPUT': g.created_at ? g.created_at.split('T')[0] : '-'
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+
+    // Auto-fit column widths
+    worksheet['!cols'] = [
+      { wch: 5 },  // NO
+      { wch: 25 }, // NAMA SISWA
+      { wch: 12 }, // NIS
+      { wch: 10 }, // KELAS
+      { wch: 12 }, // SEMESTER
+      { wch: 14 }, // JENIS TUGAS
+      { wch: 22 }, // TP
+      { wch: 16 }, // TUGAS
+      { wch: 10 }, // NILAI
+      { wch: 15 }  // TANGGAL INPUT
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Data Nilai Siswa');
+
+    const kls = previewFilterKelas ? `Kelas_${previewFilterKelas}` : 'Semua_Kelas';
+    const sem = previewFilterSemester ? `Sem_${previewFilterSemester}` : 'Semua_Sem';
+    const fileName = `Rekap_Nilai_${kls}_${sem}_${new Date().toISOString().slice(0,10)}.xlsx`;
+
+    XLSX.writeFile(workbook, fileName);
+
+    Swal.fire({
+      icon: 'success',
+      title: 'Export Berhasil!',
+      text: `File Excel (${filteredDisplayGrades.length} data) berhasil diunduh.`,
+      confirmButtonColor: '#059669',
+      timer: 2000,
+      showConfirmButton: false,
+      heightAuto: false
+    });
+  };
+
   // Cancel edit helper
   const handleCancelEdit = () => {
     setEditingGradeId(null);
@@ -1298,18 +1372,29 @@ const TeacherInputGrades: React.FC = () => {
         `}</style>
         <div className="space-y-3 border-b border-slate-100 pb-3.5">
           {/* JUDUL PREVIEW NILAI INPUT */}
-          <div className="flex items-center gap-2.5">
-            <div className="bg-emerald-50 text-emerald-700 p-2 rounded-xl shrink-0">
-              <Award size={18} />
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="bg-emerald-50 text-emerald-700 p-2 rounded-xl shrink-0">
+                <Award size={18} />
+              </div>
+              <div>
+                <h2 className="text-xs md:text-sm font-black uppercase tracking-wider text-slate-800 whitespace-nowrap">
+                  Preview Nilai Input
+                </h2>
+                <p className="text-[10px] text-slate-400 font-medium">
+                  Daftar seluruh data nilai yang terupdate dari spreadsheet / database.
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-xs md:text-sm font-black uppercase tracking-wider text-slate-800 whitespace-nowrap">
-                Preview Nilai Input
-              </h2>
-              <p className="text-[10px] text-slate-400 font-medium">
-                Daftar seluruh data nilai yang terupdate dari spreadsheet / database.
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={handleExportToExcel}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-sm shrink-0"
+              title="Export data nilai yang difilter ke file Excel"
+            >
+              <Download size={14} />
+              <span>Export Excel</span>
+            </button>
           </div>
 
           {/* FILTERS & SEARCH BAR BARIS DIBAWAH JUDUL */}
@@ -1336,8 +1421,8 @@ const TeacherInputGrades: React.FC = () => {
                   </button>
                 )}
               </div>
-              {/* 6. Hasil Jumlah Data */}
-              <div className="flex shrink-0">
+              {/* 6. Hasil Jumlah Data & Export button */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 <span className="px-2 py-1 rounded-lg text-[9px] font-black bg-emerald-100 text-emerald-800 whitespace-nowrap">
                   {filteredDisplayGrades.length} / {previewGrades.length} Data
                 </span>
