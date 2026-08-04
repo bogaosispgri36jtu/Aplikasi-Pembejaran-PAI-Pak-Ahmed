@@ -657,17 +657,17 @@ class DatabaseService {
             this.setSyncStatus('success', `Tabel ${tableName} berhasil tersimpan ke Google Sheets.`);
             return;
           } else {
-            console.warn(`Koneksi Apps Script untuk tabel ${tableName} memberikan status ${res.status}. Mencoba jalur REST API...`);
+            console.debug(`Koneksi Apps Script untuk tabel ${tableName} memberikan status ${res.status}. Mencoba jalur REST API...`);
           }
         } catch (appsScriptErr: any) {
-          console.warn(`Panggilan Apps Script untuk tabel ${tableName} gagal (${appsScriptErr.message || appsScriptErr}), mencoba jalur REST API fallback...`);
+          console.debug(`Panggilan Apps Script untuk tabel ${tableName} gagal (${appsScriptErr.message || appsScriptErr}), mencoba jalur REST API fallback...`);
         }
       }
 
       const token = accessToken || localStorage.getItem('google_oauth_token') || '';
       const spreadsheetId = await this.getSpreadsheetId();
       if (!spreadsheetId) {
-        console.warn(`Spreadsheet ID tidak terkonfigurasi untuk sinkronisasi tabel ${tableName}. Data tersimpan di lokal.`);
+        console.debug(`Spreadsheet ID tidak terkonfigurasi untuk sinkronisasi tabel ${tableName}. Data tersimpan di lokal.`);
         this.setSyncStatus('idle', `Tabel ${tableName} tersimpan lokal (Spreadsheet ID / Apps Script belum terhubung).`);
         return;
       }
@@ -676,7 +676,7 @@ class DatabaseService {
       if (!cfg) return;
 
       if (!token) {
-        console.warn(`OAuth token tidak tersedia untuk sinkronisasi REST API tabel ${tableName}. Data tersimpan di lokal.`);
+        console.debug(`OAuth token tidak tersedia untuk sinkronisasi REST API tabel ${tableName}. Data tersimpan di lokal.`);
         this.setSyncStatus('idle', `Tabel ${tableName} tersimpan lokal (OAuth token tidak tersedia).`);
         return;
       }
@@ -798,6 +798,9 @@ class DatabaseService {
                     items.push(obj);
                   }
                   this.setLocalTable(cfg.name, items);
+                  if (['Nilai', 'tujuan_pembelajaran', 'asesmen_tp', 'nilai_rapot'].includes(cfg.name)) {
+                    console.log(`[supabaseMock Fetch] Sync sheet '${cfg.name}' via Apps Script (${items.length} records):`, items);
+                  }
                 } else {
                   const existingLocal = this.getLocalTable(cfg.name);
                   if (existingLocal && existingLocal.length > 0) {
@@ -808,7 +811,7 @@ class DatabaseService {
                 }
               }
             } catch (e) {
-              console.warn(`Gagal menarik data ${cfg.name} via Apps Script:`, e);
+              console.debug(`Gagal menarik data ${cfg.name} via Apps Script:`, e);
             }
           }));
         }
@@ -985,7 +988,7 @@ class DatabaseService {
           }
         }
       } catch (eScript) {
-        console.warn("Gagal menarik data admin_users via Apps Script:", eScript);
+        console.debug("Gagal menarik data admin_users via Apps Script:", eScript);
       }
     }
 
@@ -1314,6 +1317,8 @@ class DatabaseService {
         g.kelas === kelas
       );
 
+      console.log(`[supabaseMock] recalculateAndSaveKelolaNilai: Ditemukan ${studentGrades.length} record 'Nilai' untuk Siswa ID ${studentId}, Kelas ${kelas}, Semester ${semester}.`, studentGrades);
+
       // 2. Fetch TPs, Assessments, and Weights
       const tps = this.getLocalTable<any>('tujuan_pembelajaran');
       const assessments = this.getLocalTable<any>('asesmen_tp');
@@ -1466,9 +1471,23 @@ class DatabaseService {
     }
   }
 
-  async getGradesByStudent(studentId: string): Promise<GradeRecord[]> {
+  async getGradesByStudent(studentId: string, studentNis?: string): Promise<GradeRecord[]> {
     const list = this.getLocalTable<GradeRecord>('Nilai');
-    return list.filter(g => g.student_id === studentId).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const targetId = String(studentId || '').trim();
+    const targetNis = String(studentNis || '').trim();
+
+    const filtered = list.filter(g => {
+      const sId = String(g.student_id || '').trim();
+      return (targetId && sId === targetId) || (targetNis && sId === targetNis);
+    }).sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+    console.log(`[supabaseMock] getGradesByStudent: Diambil ${filtered.length} dari total ${list.length} record sheet 'Nilai' untuk studentId '${studentId}' / NIS '${studentNis || '-'}'.`, {
+      studentId,
+      studentNis,
+      matchedRecords: filtered
+    });
+
+    return filtered;
   }
 
   async getGradesByKelas(kelas: string, semester?: string): Promise<any[]> {
@@ -1487,10 +1506,12 @@ class DatabaseService {
     }
 
     const students = await this.getStudentsByKelas(kelas);
-    return filtered.map((g: any) => ({
+    const result = filtered.map((g: any) => ({
       ...g,
       data_siswa: students.find(s => s.id === g.student_id) || { namalengkap: 'Siswa', nis: '-' }
     }));
+    console.log(`[supabaseMock] getGradesByKelas: Berhasil mengambil ${result.length} record nilai dari sheet 'Nilai' untuk Kelas ${kelas} (Semester ${semester || 'semua'}).`, result);
+    return result;
   }
 
   // --- ATTENDANCE FUNCTIONS ---

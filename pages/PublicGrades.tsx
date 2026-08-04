@@ -72,12 +72,16 @@ const PublicGrades: React.FC = () => {
         db.logKunjungan(found.nis, found.namalengkap, found.kelas, 'Cek Nilai');
 
         // 1. Ambil data nilai standard dari table "Nilai"
-        const studentGrades = await db.getGradesByStudent(found.id!);
+        const studentGrades = await db.getGradesByStudent(found.id!, found.nis);
         setAllGrades(studentGrades);
 
         // 2. Ambil data Nilai Rapot dari table "nilai_rapot" untuk pencocokan real-time
         const kList = await db.getKelolaNilai();
-        const studentKelola = kList.filter(item => String(item.student_id) === String(found.id));
+        const studentKelola = kList.filter(item => 
+          String(item.student_id) === String(found.id) || 
+          String(item.student_id) === String(found.nis) ||
+          String(item.nis) === String(found.nis)
+        );
         setAllKelolaRecords(studentKelola);
         
         Swal.fire({ 
@@ -175,30 +179,74 @@ const PublicGrades: React.FC = () => {
 
   // Filter TPs yang sesuai dengan level kelas dan semester siswa saat ini dan diurutkan dari TP 1
   const currentClassTps = localTps
-    .filter((t: any) => String(t.grade) === String(studentGradeLevel) && String(t.semester) === String(semester))
+    .filter((t: any) => {
+      const tGrade = String(t.grade || t.kelas || '').trim();
+      const tSem = String(t.semester || '').trim();
+      const matchGrade = !tGrade || tGrade.charAt(0) === String(studentGradeLevel);
+      const matchSem = !tSem || tSem === String(semester) || tSem === '0';
+      return matchGrade && matchSem;
+    })
     .sort((a: any, b: any) => {
       const codeA = String(a.code || '').toLowerCase();
       const codeB = String(b.code || '').toLowerCase();
       return codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
     });
 
-  // Fungsi pengitung nilai real-time per TP
-  const getTpScore = (tpId: string) => {
-    const relatedAsms = localAsms.filter((a: any) => a.tpId === tpId);
-    if (relatedAsms.length === 0) return null;
+  // Helper extraction untuk mencocokkan TP dari deskripsi/nama/kode
+  const getTpScore = (tp: any) => {
+    const tpId = String(tp.id || '').trim();
+    const relatedAsms = localAsms.filter((a: any) => String(a.tpId) === tpId);
 
     let sum = 0;
     let count = 0;
-    relatedAsms.forEach((asm: any) => {
-      const scoreKey = `${student?.id}_${asm.id}`;
-      const scoreVal = mergedTpScores[scoreKey];
-      if (scoreVal !== undefined && scoreVal !== null && scoreVal !== '') {
-        sum += Number(scoreVal);
-        count++;
-      }
-    });
 
-    return count > 0 ? parseFloat((sum / count).toFixed(1)) : null;
+    if (relatedAsms.length > 0) {
+      relatedAsms.forEach((asm: any) => {
+        const scoreKey1 = `${student?.id}_${asm.id}`;
+        const scoreKey2 = `${student?.nis}_${asm.id}`;
+        const scoreVal = mergedTpScores[scoreKey1] !== undefined ? mergedTpScores[scoreKey1] : mergedTpScores[scoreKey2];
+        if (scoreVal !== undefined && scoreVal !== null && scoreVal !== '') {
+          sum += Number(scoreVal);
+          count++;
+        }
+      });
+    }
+
+    // Jika tidak ada asesmen khusus atau nilainya belum ketemu, cari pencocokan langsung via allGrades
+    if (count === 0 && (student?.id || student?.nis)) {
+      const tpCodeClean = String(tp.code || '').toLowerCase().trim(); // misal 'tp 1'
+      const tpNum = tpCodeClean.replace(/[^0-9.]/g, ''); // misal '1'
+
+      allGrades.forEach(g => {
+        if (g.semester && String(g.semester) !== '0' && String(g.semester) !== String(semester)) return;
+        const descStr = String(g.description || '').toLowerCase();
+        
+        // Cek apakah g.description mengandung id, code, name, atau 'tp 1' / 'tp1'
+        const matchDirect = 
+          descStr === tpId.toLowerCase() ||
+          descStr === tpCodeClean ||
+          (tpNum && (descStr.includes(`tp ${tpNum}`) || descStr.includes(`tp${tpNum}`))) ||
+          (tp.name && descStr.includes(String(tp.name).toLowerCase()));
+
+        if (matchDirect && g.score !== undefined && g.score !== null && g.score !== '') {
+          sum += Number(g.score);
+          count++;
+        }
+      });
+    }
+
+    const calculatedScore = count > 0 ? parseFloat((sum / count).toFixed(1)) : null;
+    console.log(`[PublicGrades Match] TP '${tp.code || tp.id}' (${tp.name || '-'}) -> Skor: ${calculatedScore ?? 'Belum ada'}`, {
+      tpId: tp.id,
+      tpCode: tp.code,
+      tpName: tp.name,
+      studentId: student?.id,
+      studentNis: student?.nis,
+      relatedAsmsCount: relatedAsms.length,
+      matchedCount: count,
+      totalSum: sum
+    });
+    return calculatedScore;
   };
 
   // Nilai Harian (Rata-rata seluruh TP)
@@ -209,7 +257,7 @@ const PublicGrades: React.FC = () => {
     let count = 0;
 
     currentClassTps.forEach((tp: any) => {
-      const tpScore = getTpScore(tp.id);
+      const tpScore = getTpScore(tp);
       if (tpScore !== null) {
         sum += tpScore;
         count++;
@@ -324,7 +372,7 @@ const PublicGrades: React.FC = () => {
 
     const tpEvaluations = currentClassTps
       .map((tp: any) => {
-        const val = getTpScore(tp.id);
+        const val = getTpScore(tp);
         return { tp, score: val };
       })
       .filter((item): item is { tp: any, score: number } => item.score !== null);
@@ -430,7 +478,7 @@ const PublicGrades: React.FC = () => {
               </div>
               <div className="space-y-4">
                 {currentClassTps.map((tp) => {
-                  const tpScore = getTpScore(tp.id);
+                  const tpScore = getTpScore(tp);
                   const relatedAsms = localAsms.filter((a: any) => String(a.tpId) === String(tp.id));
 
                   const isTpOpen = openTps[tp.id] !== false;

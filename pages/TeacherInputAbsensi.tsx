@@ -62,12 +62,21 @@ const TeacherInputAbsensi: React.FC = () => {
         const data = await db.getStudentsByKelas(selectedKelas);
         setStudents(data);
         const initial: Record<string, string> = {};
-        data.forEach(s => { if (s.id) initial[s.id] = 'hadir'; });
+        data.forEach(s => { if (s.id) initial[s.id] = 'alfa'; });
         setAttendanceData(initial);
       } catch (err) { console.error(err); } finally { setLoading(false); }
     };
     fetchStudents();
   }, [selectedKelas]);
+
+  const handleSetAllHadir = () => {
+    if (students.length === 0) return;
+    const allHadir: Record<string, string> = {};
+    students.forEach(s => {
+      if (s.id) allHadir[s.id] = 'hadir';
+    });
+    setAttendanceData(allHadir);
+  };
 
   const handleStatusChange = (studentId: string, status: string) => {
     setAttendanceData(prev => ({ ...prev, [studentId]: status }));
@@ -151,7 +160,7 @@ const TeacherInputAbsensi: React.FC = () => {
         student_id: s.id!, 
         nis: s.nis,                      
         nama_siswa: s.namalengkap,       
-        status: (attendanceData[s.id!] || 'hadir') as any, 
+        status: (attendanceData[s.id!] || 'alfa') as any, 
         date: date, 
         kelas: selectedKelas, 
         semester: String(semester) 
@@ -253,7 +262,23 @@ const TeacherInputAbsensi: React.FC = () => {
         )}
 
         <div className="border border-slate-100 rounded-xl overflow-hidden bg-white shadow-sm">
-          <div className="bg-slate-50 p-2 md:p-3 border-b border-slate-100 flex justify-between items-center"><h3 className="text-[9px] md:text-xs font-bold text-slate-700 uppercase tracking-tight">Daftar Siswa {selectedKelas}</h3>{loading && <Loader2 size={12} className="animate-spin text-amber-600" />}</div>
+          <div className="bg-slate-50 p-2 md:p-3 border-b border-slate-100 flex justify-between items-center gap-2">
+            <h3 className="text-[9px] md:text-xs font-bold text-slate-700 uppercase tracking-tight">Daftar Siswa {selectedKelas}</h3>
+            <div className="flex items-center gap-2">
+              {students.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleSetAllHadir}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] md:text-[10px] font-bold flex items-center gap-1 transition-all active:scale-95 shadow-xs"
+                  title="Atur status semua siswa menjadi Hadir"
+                >
+                  <CheckCircle2 size={12} />
+                  <span>Hadirkan Semua</span>
+                </button>
+              )}
+              {loading && <Loader2 size={12} className="animate-spin text-amber-600" />}
+            </div>
+          </div>
           <div className="divide-y divide-slate-50 max-h-[620px] overflow-y-auto">
             {students.length > 0 ? students.map((s, idx) => (
               <div key={s.id || s.nis} className="py-1 px-2 md:py-1.5 md:px-3 flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors">
