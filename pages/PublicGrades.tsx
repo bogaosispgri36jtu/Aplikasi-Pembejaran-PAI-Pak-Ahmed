@@ -139,6 +139,7 @@ const PublicGrades: React.FC = () => {
   // Ambil state ledger PAI dari localStorage/DB yang sinkron dengan guru
   const localTps = db.getLocalTable<any>('tujuan_pembelajaran');
   const localAsms = db.getLocalTable<any>('asesmen_tp');
+  const localExams = db.getLocalTable<any>('ujian');
   
   const savedTpScores = localStorage.getItem('pai_grades_tp_scores');
   const savedWeights = localStorage.getItem('pai_grade_weights');
@@ -158,22 +159,60 @@ const PublicGrades: React.FC = () => {
 
   // Helper resolve details dari penilaian / tugas guru yang diambil dari JENIS PENILAIAN pada nilai-rapot
   const resolveAssignmentDetails = (g: GradeRecord) => {
-    if (g.subject_type === 'harian' || g.subject_type === 'praktik') {
-      const asm = localAsms.find((a: any) => String(a.id) === String(g.description));
-      if (asm) {
-        return {
-          taskName: asm.name || 'Tugas',
-          jenisPenilaian: asm.type || (g.subject_type === 'praktik' ? 'Praktik' : 'Harian')
-        };
-      }
-    }
     const normalizedType = String(g.subject_type).toLowerCase();
+    
+    // Check if description is an assessment ID and fetch it directly
+    const asm = localAsms.find((a: any) => String(a.id) === String(g.description));
+    if (asm) {
+      return {
+        taskName: asm.name || 'Tugas',
+        jenisPenilaian: asm.type || (normalizedType === 'praktik' ? 'Praktik' : 'Harian')
+      };
+    }
+
+    let examTpText = '';
+    console.log(`[PublicGrades] Resolving assignment details for: ${g.description} - Type: ${normalizedType}`);
+    
+    if (normalizedType === 'ujian online' || normalizedType === 'tugas online') {
+       const descClean = String(g.description || '').toLowerCase().trim();
+       const exam = localExams.find((e: any) => {
+           const eTitle = String(e.title || '').toLowerCase().trim();
+           const eAsmId = String(e.assessment_id || '').toLowerCase().trim();
+           const eId = String(e.id || '').toLowerCase().trim();
+           return eTitle === descClean || eAsmId === descClean || eId === descClean;
+       });
+       console.log(`[PublicGrades] Match exam for ${g.description}: `, exam);
+       
+       if (exam) {
+          // Sometimes exam has tp_id, or maybe we can check assessment_id from localAsms
+          let foundTpId = exam.tp_id;
+          if (!foundTpId && exam.assessment_id) {
+             const asm = localAsms.find((a: any) => String(a.id) === String(exam.assessment_id));
+             if (asm && asm.tpId) {
+                 foundTpId = asm.tpId;
+             }
+          }
+          console.log(`[PublicGrades] Found tp_id for exam: ${foundTpId}`);
+          
+          if (foundTpId) {
+            const tp = localTps.find((t: any) => String(t.id) === String(foundTpId));
+            console.log(`[PublicGrades] Found TP for exam: `, tp);
+            if (tp) {
+               examTpText = ` (${tp.code} - ${tp.name})`;
+            }
+          }
+       }
+    }
+
     const typeLabel = normalizedType === 'uts' ? 'Sumatif Tengah Semester (STS)' :
                       normalizedType === 'uas' ? 'Sumatif Akhir Semester (SAS)' :
-                      normalizedType === 'praktik' ? 'Praktik' : 'Sumatif Harian';
+                      normalizedType === 'praktik' ? 'Praktik' : 
+                      normalizedType === 'ujian online' ? 'Ujian Online' :
+                      normalizedType === 'tugas online' ? 'Tugas Online' : 'Sumatif Harian';
+
     return {
-      taskName: g.description && !g.description.includes('asm-') ? g.description : typeLabel,
-      jenisPenilaian: typeLabel
+      taskName: g.description && !g.description.includes('asm-') && !g.description.includes('asm_') ? g.description : typeLabel,
+      jenisPenilaian: typeLabel + examTpText
     };
   };
 
@@ -227,8 +266,23 @@ const PublicGrades: React.FC = () => {
           descStr === tpCodeClean ||
           (tpNum && (descStr.includes(`tp ${tpNum}`) || descStr.includes(`tp${tpNum}`))) ||
           (tp.name && descStr.includes(String(tp.name).toLowerCase()));
+          
+        let matchExam = false;
+        if (!matchDirect) {
+           const exam = localExams.find((e: any) => e.title?.toLowerCase() === descStr || (e.assessment_id && e.assessment_id.toLowerCase() === descStr));
+           if (exam) {
+               let foundTpId = exam.tp_id;
+               if (!foundTpId && exam.assessment_id) {
+                   const asm = localAsms.find((a: any) => String(a.id) === String(exam.assessment_id));
+                   if (asm && asm.tpId) foundTpId = asm.tpId;
+               }
+               if (String(foundTpId) === tpId) {
+                   matchExam = true;
+               }
+           }
+        }
 
-        if (matchDirect && g.score !== undefined && g.score !== null && g.score !== '') {
+        if ((matchDirect || matchExam) && g.score !== undefined && g.score !== null && g.score !== '') {
           sum += Number(g.score);
           count++;
         }
@@ -479,7 +533,31 @@ const PublicGrades: React.FC = () => {
               <div className="space-y-4">
                 {currentClassTps.map((tp) => {
                   const tpScore = getTpScore(tp);
-                  const relatedAsms = localAsms.filter((a: any) => String(a.tpId) === String(tp.id));
+                  const relatedAsms = localAsms.filter((a: any) => String(a.tpId) === String(tp.id)).map((a: any) => ({ ...a, isExam: false }));
+                  
+                  // Masukkan ujian/tugas online yang terhubung ke TP ini (meskipun tidak ada asm.id)
+                  localExams.forEach((e: any) => {
+                     let foundTpId = e.tp_id;
+                     if (!foundTpId && e.assessment_id) {
+                         const asm = localAsms.find((a: any) => String(a.id) === String(e.assessment_id));
+                         if (asm && asm.tpId) foundTpId = asm.tpId;
+                     }
+
+                     if (String(foundTpId) === String(tp.id)) {
+                        // Periksa apakah ujian ini sudah ada di relatedAsms (via assessment_id atau title)
+                        const examIdStr = e.assessment_id || e.title;
+                        const alreadyExists = relatedAsms.find((a: any) => String(a.id) === String(examIdStr));
+                        if (!alreadyExists) {
+                           relatedAsms.push({
+                              id: examIdStr,
+                              name: e.title,
+                              type: e.category || 'Ujian Online',
+                              tpId: foundTpId,
+                              isExam: true
+                           });
+                        }
+                     }
+                  });
 
                   const isTpOpen = openTps[tp.id] !== false;
 
@@ -514,8 +592,9 @@ const PublicGrades: React.FC = () => {
                         <div className="space-y-2 pt-2 border-t border-slate-100 pl-1 md:pl-2 animate-fadeIn">
                           {relatedAsms.length > 0 ? (
                             relatedAsms.map((asm: any) => {
-                              const scoreKey = `${student?.id}_${asm.id}`;
-                              const scoreVal = mergedTpScores[scoreKey];
+                              const scoreKey1 = `${student?.id}_${asm.id}`;
+                              const scoreKey2 = `${student?.nis}_${asm.id}`;
+                              const scoreVal = mergedTpScores[scoreKey1] !== undefined ? mergedTpScores[scoreKey1] : mergedTpScores[scoreKey2];
                               const hasScore = scoreVal !== undefined && scoreVal !== null && scoreVal !== '';
                               
                               return (

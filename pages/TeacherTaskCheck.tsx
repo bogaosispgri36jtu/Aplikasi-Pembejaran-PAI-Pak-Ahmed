@@ -38,6 +38,9 @@ const TeacherTaskCheck: React.FC = () => {
   
   const [availableClasses, setAvailableClasses] = useState<string[]>([]);
 
+  // --- STATE SELECTION UNTUK BATCH DELETE ---
+  const [selectedTasks, setSelectedTasks] = useState<string[]>([]);
+
   // --- STATE NILAI (SUDAH / BELUM) ---
   const [gradedStatusMap, setGradedStatusMap] = useState<Record<string, 'sudah' | 'belum'>>(() => {
     try {
@@ -387,6 +390,60 @@ const TeacherTaskCheck: React.FC = () => {
   };
 
   // --- ACTIONS: DELETE TASK (NEW FEATURE) ---
+  const handleToggleSelectAll = (filteredTasks: TaskSubmission[]) => {
+    if (selectedTasks.length === filteredTasks.length) {
+      setSelectedTasks([]);
+    } else {
+      setSelectedTasks(filteredTasks.map(t => t.id));
+    }
+  };
+
+  const handleToggleSelectTask = (id: string) => {
+    if (selectedTasks.includes(id)) {
+      setSelectedTasks(prev => prev.filter(tId => tId !== id));
+    } else {
+      setSelectedTasks(prev => [...prev, id]);
+    }
+  };
+
+  const handleDeleteSelectedTasks = async () => {
+      if (selectedTasks.length === 0) return;
+      const confirm = await Swal.fire({
+          title: 'Hapus Tugas Terpilih?',
+          text: `Anda akan menghapus ${selectedTasks.length} tugas yang dipilih.`,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonColor: '#dc2626',
+          confirmButtonText: 'Ya, Hapus Semua',
+          cancelButtonText: 'Batal',
+          heightAuto: false
+      });
+
+      if (!confirm.isConfirmed) return;
+
+      const token = await verifySecurityToken('Masukkan Token ID Server PAI');
+
+      if (token === "PAI_ADMIN_GURU") {
+          Swal.fire({ title: 'Menghapus...', didOpen: () => Swal.showLoading(), heightAuto: false });
+          try {
+              await db.deleteMultipleTaskSubmissions(selectedTasks);
+              setSelectedTasks([]);
+              await loadTasks(); // Reload data
+              Swal.close();
+              setTimeout(() => {
+                  Swal.fire({icon: 'success', title: 'Terhapus', timer: 1000, showConfirmButton: false, heightAuto: false});
+              }, 150);
+          } catch (e) {
+              Swal.close();
+              setTimeout(() => {
+                  Swal.fire({icon: 'error', title: 'Gagal', text: 'Gagal menghapus data.', heightAuto: false});
+              }, 150);
+          }
+      } else if (token !== null) {
+          Swal.fire({icon: 'error', title: 'Akses Ditolak', text: 'Token salah.', heightAuto: false});
+      }
+  };
+
   const handleDeleteTask = async (task: TaskSubmission) => {
       // 1. Konfirmasi Awal
       const confirm = await Swal.fire({
@@ -637,32 +694,65 @@ const TeacherTaskCheck: React.FC = () => {
           <div className="max-h-[550px] overflow-y-auto scrollbar-thin relative">
             {activeTab === 'tasks' ? (
                 /* ================= TABEL TUGAS UPLOAD ================= */
-                <table className="w-full text-left">
-                  <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-100 shadow-sm">
-                    <tr>
-                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center w-12">NO</th>
-                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Siswa</th>
-                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest hidden md:table-cell">Judul</th>
-                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipe</th>
-                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">NILAI</th>
-                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {filteredData.map((task: TaskSubmission, index: number) => {
-                      const isSudah = gradedStatusMap[task.id] === 'sudah';
-                      return (
-                        <tr 
-                          key={task.id} 
-                          className={`transition-colors border-b ${
-                            isSudah 
-                              ? 'bg-red-100/90 text-red-950 border-red-200 hover:bg-red-200/80' 
-                              : 'hover:bg-slate-50/50 border-slate-50'
-                          }`}
-                        >
-                          <td className={`px-4 py-3 text-center align-middle font-bold text-[10px] md:text-xs ${isSudah ? 'text-red-900' : 'text-slate-500'}`}>
-                              {index + 1}
-                          </td>
+                <div className="relative">
+                  {selectedTasks.length > 0 && (
+                    <div className="sticky top-0 z-20 bg-red-50 border-b border-red-100 p-2 md:p-3 flex justify-between items-center shadow-sm">
+                      <span className="text-red-600 font-bold text-[10px] md:text-sm">
+                        {selectedTasks.length} tugas terpilih
+                      </span>
+                      <button
+                        onClick={handleDeleteSelectedTasks}
+                        className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 md:px-4 md:py-2 rounded-lg text-[10px] md:text-xs font-bold flex items-center gap-2 transition-all shadow-sm active:scale-95"
+                      >
+                        <Trash2 size={14} /> Hapus Terpilih
+                      </button>
+                    </div>
+                  )}
+                  <table className="w-full text-left">
+                    <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-100 shadow-sm">
+                      <tr>
+                        <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center w-12">
+                          <input 
+                            type="checkbox" 
+                            className="w-4 h-4 cursor-pointer rounded accent-slate-600"
+                            checked={filteredData.length > 0 && selectedTasks.length === filteredData.length}
+                            onChange={() => handleToggleSelectAll(filteredData as TaskSubmission[])}
+                          />
+                        </th>
+                        <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center w-12">NO</th>
+                        <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Siswa</th>
+                        <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest hidden md:table-cell">Judul</th>
+                        <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipe</th>
+                        <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">NILAI</th>
+                        <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {filteredData.map((task: TaskSubmission, index: number) => {
+                        const isSudah = gradedStatusMap[task.id] === 'sudah';
+                        const isSelected = selectedTasks.includes(task.id);
+                        return (
+                          <tr 
+                            key={task.id} 
+                            className={`transition-colors border-b ${
+                              isSelected
+                                ? 'bg-red-50 border-red-100'
+                                : isSudah 
+                                ? 'bg-red-100/90 text-red-950 border-red-200 hover:bg-red-200/80' 
+                                : 'hover:bg-slate-50/50 border-slate-50'
+                            }`}
+                          >
+                            <td className="px-4 py-3 text-center align-middle">
+                              <input 
+                                type="checkbox" 
+                                className="w-4 h-4 cursor-pointer rounded accent-red-600"
+                                checked={isSelected}
+                                onChange={() => handleToggleSelectTask(task.id)}
+                              />
+                            </td>
+                            <td className={`px-4 py-3 text-center align-middle font-bold text-[10px] md:text-xs ${isSudah ? 'text-red-900' : 'text-slate-500'}`}>
+                                {index + 1}
+                            </td>
                           <td className="px-4 py-3">
                             <div className="flex flex-col">
                               <span className={`font-bold text-[11px] md:text-sm leading-tight ${isSudah ? 'text-red-950' : 'text-slate-800'}`}>{task.student_name}</span>
@@ -742,6 +832,7 @@ const TeacherTaskCheck: React.FC = () => {
                     })}
                   </tbody>
                 </table>
+              </div>
             ) : (
                 /* ================= TABEL HASIL UJIAN ================= */
                 <table className="w-full text-left">
@@ -752,40 +843,34 @@ const TeacherTaskCheck: React.FC = () => {
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest hidden md:table-cell">Nama Tugas</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Skor</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Waktu</th>
-                      <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">NILAI</th>
                       <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Hapus</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {filteredData.map((res: any, index: number) => {
-                      const isSudah = gradedStatusMap[res.id] === 'sudah';
                       return (
                         <tr 
                           key={res.id} 
-                          className={`transition-colors border-b ${
-                            isSudah 
-                              ? 'bg-red-100/90 text-red-950 border-red-200 hover:bg-red-200/80' 
-                              : 'hover:bg-slate-50/50 border-slate-50'
-                          }`}
+                          className="transition-colors border-b hover:bg-slate-50/50 border-slate-50"
                         >
-                          <td className={`px-4 py-3 text-center align-middle font-bold text-[10px] md:text-xs ${isSudah ? 'text-red-900' : 'text-slate-500'}`}>
+                          <td className="px-4 py-3 text-center align-middle font-bold text-[10px] md:text-xs text-slate-500">
                               {index + 1}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex flex-col">
-                              <span className={`font-bold text-[11px] md:text-sm leading-tight ${isSudah ? 'text-red-950' : 'text-slate-800'}`}>{res.student_name}</span>
-                              <span className={`text-[8px] md:text-[10px] uppercase font-black tracking-tighter ${isSudah ? 'text-red-800' : 'text-slate-400'}`}>Kelas {res.student_class}</span>
+                              <span className="font-bold text-[11px] md:text-sm leading-tight text-slate-800">{res.student_name}</span>
+                              <span className="text-[8px] md:text-[10px] uppercase font-black tracking-tighter text-slate-400">Kelas {res.student_class}</span>
                               
                               {/* REVISI: INFO TAMBAHAN KHUSUS MOBILE (DI BAWAH KELAS) */}
                               <div className="block md:hidden mt-1.5 pt-1.5 border-t border-slate-100">
-                                 <span className={`text-[10px] font-bold block leading-tight ${isSudah ? 'text-red-900' : 'text-slate-700'}`}>{res.ujian?.title || '-'}</span>
-                                 <span className={`text-[9px] font-bold uppercase ${isSudah ? 'text-red-800' : 'text-emerald-600'}`}>{res.ujian?.category} • Sem {res.semester}</span>
+                                 <span className="text-[10px] font-bold block leading-tight text-slate-700">{res.ujian?.title || '-'}</span>
+                                 <span className="text-[9px] font-bold uppercase text-emerald-600">{res.ujian?.category} • Sem {res.semester}</span>
                               </div>
                             </div>
                           </td>
                           <td className="px-4 py-3 hidden md:table-cell">
-                            <span className={`text-sm font-medium ${isSudah ? 'text-red-950' : 'text-slate-600'}`}>{res.ujian?.title || '-'}</span>
-                            <span className={`block text-[10px] uppercase font-bold ${isSudah ? 'text-red-800' : 'text-slate-400'}`}>{res.ujian?.category} • Sem {res.semester}</span>
+                            <span className="text-sm font-medium text-slate-600">{res.ujian?.title || '-'}</span>
+                            <span className="block text-[10px] uppercase font-bold text-slate-400">{res.ujian?.category} • Sem {res.semester}</span>
                           </td>
                           <td className="px-4 py-3 text-center align-top md:align-middle">
                              <span className={`inline-block w-8 py-1 rounded-lg font-black text-[10px] md:text-xs ${res.score >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
@@ -793,11 +878,11 @@ const TeacherTaskCheck: React.FC = () => {
                              </span>
                           </td>
                           <td className="px-4 py-3 align-top md:align-middle">
-                             <div className={`flex flex-col text-[10px] md:text-xs ${isSudah ? 'text-red-900' : 'text-slate-500'}`}>
+                             <div className="flex flex-col text-[10px] md:text-xs text-slate-500">
                                 <span className="font-bold">{new Date(res.submitted_at).toLocaleDateString('id-ID')}</span>
                                 <span className="flex items-center gap-1 text-[9px]"><Clock size={10}/> {new Date(res.submitted_at).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})} WIB</span>
                                 {/* REVISI: MENAMPILKAN LAMA PENGERJAAN RIIL */}
-                                <span className={`text-[9px] font-bold mt-1 block ${isSudah ? 'text-red-800' : 'text-emerald-600'}`}>
+                                <span className="text-[9px] font-bold mt-1 block text-emerald-600">
                                     Pengerjaan: {calculateRealDuration(res.started_at, res.submitted_at)}
                                 </span>
                                 
@@ -809,37 +894,6 @@ const TeacherTaskCheck: React.FC = () => {
                                     </span>
                                 )}
                              </div>
-                          </td>
-                          <td className="px-4 py-3 text-center align-middle">
-                            <div className="flex items-center justify-center gap-2 whitespace-nowrap">
-                              <label className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] md:text-xs font-bold cursor-pointer transition-all select-none ${
-                                isSudah
-                                  ? 'bg-red-600 text-white border-red-600 shadow-sm'
-                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                              }`}>
-                                <input
-                                  type="checkbox"
-                                  checked={isSudah}
-                                  onChange={() => handleToggleGraded(res.id, 'sudah')}
-                                  className="w-3.5 h-3.5 accent-red-600 cursor-pointer rounded"
-                                />
-                                <span>Sudah</span>
-                              </label>
-
-                              <label className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] md:text-xs font-bold cursor-pointer transition-all select-none ${
-                                !isSudah
-                                  ? 'bg-slate-200 text-slate-800 border-slate-300'
-                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                              }`}>
-                                <input
-                                  type="checkbox"
-                                  checked={!isSudah}
-                                  onChange={() => handleToggleGraded(res.id, 'belum')}
-                                  className="w-3.5 h-3.5 accent-slate-600 cursor-pointer rounded"
-                                />
-                                <span>Belum</span>
-                              </label>
-                            </div>
                           </td>
                           <td className="px-4 py-3 text-center align-top md:align-middle">
                             <button

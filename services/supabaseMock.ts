@@ -1750,7 +1750,21 @@ class DatabaseService {
     const filtered = list.filter(s => s.id !== id);
     this.setLocalTable('data_TugasSiswa', filtered);
 
-    // Sync to Google Sheets!
+    // Sync to Google Sheets and wait for completion (real-time delete feedback)
+    const appsScriptUrl = await this.getAppsScriptUrl();
+    const spreadsheetId = await this.getSpreadsheetId();
+    if (appsScriptUrl || spreadsheetId) {
+      const token = localStorage.getItem('google_oauth_token') || undefined;
+      await this.syncTableToGoogleSheets('data_TugasSiswa', token);
+    }
+  }
+
+  async deleteMultipleTaskSubmissions(ids: string[]): Promise<void> {
+    const list = this.getLocalTable<TaskSubmission>('data_TugasSiswa');
+    const filtered = list.filter(s => !ids.includes(s.id));
+    this.setLocalTable('data_TugasSiswa', filtered);
+
+    // Sync to Google Sheets and wait for completion (real-time delete feedback)
     const appsScriptUrl = await this.getAppsScriptUrl();
     const spreadsheetId = await this.getSpreadsheetId();
     if (appsScriptUrl || spreadsheetId) {
