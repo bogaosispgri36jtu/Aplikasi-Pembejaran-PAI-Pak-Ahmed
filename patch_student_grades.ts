@@ -32,7 +32,7 @@ const replacement = `
          name_student: r.student_name,
          subject_type: subjectType as any,
          score: r.score,
-         description: examDef ? examDef.title : 'Ujian',
+         description: examDef ? (examDef.assessment_id || examDef.title) : 'Ujian',
          kelas: r.student_class,
          semester: String(r.semester || '1'),
          created_at: r.submitted_at || new Date().toISOString()
@@ -47,5 +47,5 @@ const replacement = `
   }
 `;
 
-content = content.replace(/async getGradesByStudent\([\s\S]*?return filtered;\n  }/, replacement.trim());
+content = content.replace(/async getGradesByStudent\([\s\S]*?return combined;\n  }/, replacement.trim());
 fs.writeFileSync('services/supabaseMock.ts', content);

@@ -2,7 +2,7 @@ import fs from 'fs';
 
 let content = fs.readFileSync('services/supabaseMock.ts', 'utf8');
 
-const newMethod = `
+const replacement = `
   async getAllGrades(): Promise<any[]> {
     const list = this.getLocalTable<GradeRecord>('Nilai');
     
@@ -27,7 +27,7 @@ const newMethod = `
          name_student: r.student_name,
          subject_type: subjectType,
          score: r.score,
-         description: examDef ? examDef.title : 'Ujian',
+         description: examDef ? (examDef.assessment_id || examDef.title) : 'Ujian',
          kelas: r.student_class,
          semester: String(r.semester || '1'),
          created_at: r.submitted_at || new Date().toISOString(),
@@ -44,7 +44,5 @@ const newMethod = `
   }
 `;
 
-if (!content.includes('async getAllGrades()')) {
-    content = content.replace(/async getGradesByKelas\(/, newMethod + '\n\n  async getGradesByKelas(');
-    fs.writeFileSync('services/supabaseMock.ts', content);
-}
+content = content.replace(/async getAllGrades\([\s\S]*?return \[\.\.\.result, \.\.\.mappedExams\];\n  }/, replacement.trim());
+fs.writeFileSync('services/supabaseMock.ts', content);

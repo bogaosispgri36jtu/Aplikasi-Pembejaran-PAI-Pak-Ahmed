@@ -754,6 +754,111 @@ class DatabaseService {
   }
 
   // Sinkronisasi Google Sheets -> lokal (LocalStorage)
+  
+  async syncSingleTableFromGoogleSheets(tableName: string, accessToken?: string): Promise<void> {
+    try {
+      const appsScriptUrl = await this.getAppsScriptUrl();
+      const cfg = TABS_CONFIG.find(c => c.name === tableName);
+      if (!cfg) return;
+
+      let isSynced = false;
+
+      if (appsScriptUrl) {
+        try {
+          const res = await fetch(`${appsScriptUrl}?sheet=${encodeURIComponent(cfg.name)}`, { method: 'GET' });
+          if (res.ok) {
+            const json = await res.json();
+            const rows: any[][] = json.values || [];
+            if (rows.length > 1) {
+              const headers = rows[0];
+              const items: any[] = [];
+              for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.length === 0 || !row[0]) continue;
+                const obj: any = {};
+                headers.forEach((header, colIdx) => {
+                  let cellVal = row[colIdx];
+                  if (cellVal === undefined || cellVal === null) cellVal = '';
+                  
+                  if (typeof cellVal === 'string' && (cellVal.startsWith('[') || cellVal.startsWith('{'))) {
+                    try {
+                      cellVal = JSON.parse(cellVal);
+                    } catch (_) {}
+                  }
+                  const canonicalKey = this.getCanonicalHeader(header, cfg.headers);
+                  if (canonicalKey) {
+                    if (canonicalKey === 'date' || canonicalKey === 'tanggal') {
+                      cellVal = formatDateOnly(cellVal);
+                    }
+                    obj[canonicalKey] = cellVal;
+                  }
+                });
+                items.push(obj);
+              }
+              if (items.length > 0) {
+                this.setLocalTable(cfg.name, items);
+                isSynced = true;
+              }
+            }
+          }
+        } catch (e) {
+          console.debug(`Gagal fetch ${tableName} via Apps Script, mencoba jalur OAuth/GViz...`, e);
+        }
+      }
+
+      const spreadsheetId = await this.getSpreadsheetId();
+      if (!isSynced && spreadsheetId) {
+          const publicRes = await fetch(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(cfg.name)}`);
+          if (publicRes.ok) {
+            const txt = await publicRes.text();
+            const match = txt.match(/google\.visualization\.Query\.setResponse\(([\s\S]*?)\);/);
+            if (match) {
+              const json = JSON.parse(match[1]);
+              if (json.table && json.table.rows) {
+                const cols = json.table.cols || [];
+                const headers = cols.map((c: any) => c.label || '').filter(Boolean);
+                const activeHeaders = headers.length > 0 ? headers : cfg.headers;
+
+                const items: any[] = [];
+                json.table.rows.forEach((row: any) => {
+                  const obj: any = {};
+                  if (row.c) {
+                    row.c.forEach((cell: any, idx: number) => {
+                      const key = activeHeaders[idx];
+                      if (key) {
+                        let val = cell ? cell.v : null;
+                        if (val === null || val === undefined) val = '';
+                        
+                        if (typeof val === 'string' && (val.startsWith('[') || val.startsWith('{'))) {
+                          try {
+                            val = JSON.parse(val);
+                          } catch (_) {}
+                        }
+                        const canonicalKey = this.getCanonicalHeader(key, cfg.headers);
+                        if (canonicalKey) {
+                          if (canonicalKey === 'date' || canonicalKey === 'tanggal') {
+                             val = formatDateOnly(val);
+                          }
+                          obj[canonicalKey] = val;
+                        }
+                      }
+                    });
+                  }
+                  items.push(obj);
+                });
+                if (items.length > 0) {
+                  this.setLocalTable(cfg.name, items);
+                }
+              }
+            }
+          }
+      }
+    } catch (e) {
+       console.error(`Gagal syncSingleTableFromGoogleSheets untuk ${tableName}:`, e);
+    }
+  }
+
+
   async syncFromGoogleSheets(accessToken?: string): Promise<void> {
     this.isSyncingFromSheets = true;
     try {
@@ -1500,7 +1605,7 @@ class DatabaseService {
          name_student: r.student_name,
          subject_type: subjectType as any,
          score: r.score,
-         description: examDef ? examDef.title : 'Ujian',
+         description: examDef ? (examDef.assessment_id || examDef.title) : 'Ujian',
          kelas: r.student_class,
          semester: String(r.semester || '1'),
          created_at: r.submitted_at || new Date().toISOString()
@@ -1539,7 +1644,7 @@ class DatabaseService {
          name_student: r.student_name,
          subject_type: subjectType,
          score: r.score,
-         description: examDef ? examDef.title : 'Ujian',
+         description: examDef ? (examDef.assessment_id || examDef.title) : 'Ujian',
          kelas: r.student_class,
          semester: String(r.semester || '1'),
          created_at: r.submitted_at || new Date().toISOString(),
@@ -1605,7 +1710,7 @@ class DatabaseService {
          name_student: r.student_name,
          subject_type: subjectType,
          score: r.score,
-         description: examDef ? examDef.title : 'Ujian',
+         description: examDef ? (examDef.assessment_id || examDef.title) : 'Ujian',
          kelas: r.student_class,
          semester: String(r.semester || '1'),
          created_at: r.submitted_at || new Date().toISOString(),
