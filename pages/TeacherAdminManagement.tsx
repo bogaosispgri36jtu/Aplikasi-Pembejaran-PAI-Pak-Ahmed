@@ -64,10 +64,10 @@ const TeacherAdminManagement: React.FC = () => {
   });
   const [spreadsheetId, setSpreadsheetId] = useState<string | null>(null);
   const [appsScriptUrl, setAppsScriptUrl] = useState<string>(() => {
-    return localStorage.getItem('google_apps_script_url') || import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || '';
+    return 'https://script.google.com/macros/s/AKfycbzD13Ew8LAodfPljzyU89hyDAYWVydrG84_Wi0qjkMiVYyAB1vUgdjZYu72HTgMJN__/exec';
   });
   const [useAppsScript, setUseAppsScript] = useState<boolean>(() => {
-    return !!localStorage.getItem('google_apps_script_url') || true;
+    return true;
   });
   const [showTutorial, setShowTutorial] = useState(false);
   const [manualSheetId, setManualSheetId] = useState('');

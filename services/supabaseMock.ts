@@ -337,7 +337,7 @@ class DatabaseService {
   }
 
   async getAppsScriptUrl(): Promise<string | null> {
-    return localStorage.getItem('google_apps_script_url') || import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbzD13Ew8LAodfPljzyU89hyDAYWVydrG84_Wi0qjkMiVYyAB1vUgdjZYu72HTgMJN__/exec';
+    return 'https://script.google.com/macros/s/AKfycbzD13Ew8LAodfPljzyU89hyDAYWVydrG84_Wi0qjkMiVYyAB1vUgdjZYu72HTgMJN__/exec';
   }
 
   async setAppsScriptUrl(url: string | null): Promise<void> {
