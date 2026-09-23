@@ -283,6 +283,309 @@ const TeacherInputGrades: React.FC = () => {
     });
   };
 
+  // Function to export Excel report checking students who have not completed tasks (sheet per class)
+  const handleExportBelumTugasExcel = async () => {
+    const allStudents = allStudentsData.length > 0 ? allStudentsData : db.getLocalTable<any>('data_siswa');
+    if (allStudents.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Data Siswa Kosong',
+        text: 'Tidak ada data siswa yang ditemukan untuk membuat laporan.',
+        confirmButtonColor: '#059669',
+        heightAuto: false
+      });
+      return;
+    }
+
+    const allGrades = db.getLocalTable<any>('Nilai');
+    const allTps = allTpsData.length > 0 ? allTpsData : db.getLocalTable<any>('tujuan_pembelajaran');
+    const allAsms = allAsmsData.length > 0 ? allAsmsData : db.getLocalTable<any>('asesmen_tp');
+
+    // Tentukan daftar kelas target
+    let targetClasses: string[] = [];
+    if (previewFilterKelas) {
+      targetClasses = [previewFilterKelas];
+    } else {
+      const uniqueClasses = Array.from(new Set(allStudents.map((s: any) => s.kelas).filter(Boolean)));
+      uniqueClasses.sort((a: any, b: any) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+      targetClasses = uniqueClasses as string[];
+    }
+
+    if (targetClasses.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Kelas Tidak Ditemukan',
+        text: 'Data kelas tidak ditemukan pada basis data siswa.',
+        confirmButtonColor: '#059669',
+        heightAuto: false
+      });
+      return;
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const usedSheetNames = new Set<string>();
+
+    const getSafeSheetName = (rawName: string) => {
+      let clean = rawName.replace(/[\\/?*[\]:]/g, '_').trim();
+      if (clean.length > 28) clean = clean.substring(0, 28);
+      let finalName = clean;
+      let counter = 1;
+      while (usedSheetNames.has(finalName.toLowerCase())) {
+        finalName = `${clean}_${counter}`;
+        counter++;
+      }
+      usedSheetNames.add(finalName.toLowerCase());
+      return finalName;
+    };
+
+    const rekapGlobalRows: any[] = [];
+    const daftarSemuaSiswaBelum: any[] = [];
+
+    for (const cls of targetClasses) {
+      const classStudents = allStudents.filter((s: any) => String(s.kelas || '').toUpperCase() === String(cls).toUpperCase());
+      if (classStudents.length === 0) continue;
+      classStudents.sort((a: any, b: any) => (a.namalengkap || '').localeCompare(b.namalengkap || ''));
+
+      // Deteksi jenjang (7, 8, atau 9)
+      const gradeDigit = String(cls).includes('7') ? '7' : String(cls).includes('8') ? '8' : String(cls).includes('9') ? '9' : '7';
+
+      let classTps = allTps.filter((t: any) => String(t.grade) === gradeDigit);
+      if (previewFilterSemester) {
+        classTps = classTps.filter((t: any) => String(t.semester) === String(previewFilterSemester));
+      }
+      const tpIdSet = new Set(classTps.map((t: any) => String(t.id)));
+
+      const classAsms = allAsms.filter((a: any) => tpIdSet.has(String(a.tpId)));
+
+      const classGrades = allGrades.filter((g: any) => {
+        const matchKls = String(g.kelas || '').toUpperCase() === String(cls).toUpperCase();
+        const matchSem = previewFilterSemester ? String(g.semester) === String(previewFilterSemester) : true;
+        return matchKls && matchSem;
+      });
+
+      interface TaskDef {
+        key: string;
+        label: string;
+        type: string;
+      }
+      const tasksMap = new Map<string, TaskDef>();
+
+      classAsms.forEach((asm: any) => {
+        const tp = classTps.find((t: any) => String(t.id) === String(asm.tpId));
+        const tpCode = tp?.code ? (tp.code.toUpperCase().startsWith('TP') ? tp.code.toUpperCase() : `TP ${tp.code}`) : 'TP';
+        const label = `[${tpCode}] ${asm.name || 'Tugas'}`;
+        tasksMap.set(String(asm.id), {
+          key: String(asm.id),
+          label: label,
+          type: asm.type || 'Tugas'
+        });
+      });
+
+      classGrades.forEach((g: any) => {
+        const typeLower = String(g.subject_type || '').toLowerCase();
+        let key = g.description ? String(g.description) : `task_${typeLower}`;
+        if (!tasksMap.has(key)) {
+          const { tpText, tugasText } = getTpAndTugasText(g);
+          const label = tpText !== '-' ? `[${tpText}] ${tugasText}` : tugasText;
+          tasksMap.set(key, {
+            key,
+            label,
+            type: g.subject_type || 'Tugas'
+          });
+        }
+      });
+
+      // Fallback jika belum ada asesmen sama sekali
+      if (tasksMap.size === 0) {
+        classTps.forEach((tp: any, idx: number) => {
+          const tpCode = tp.code ? (tp.code.toUpperCase().startsWith('TP') ? tp.code.toUpperCase() : `TP ${tp.code}`) : `TP ${idx + 1}`;
+          tasksMap.set(String(tp.id), {
+            key: String(tp.id),
+            label: `[${tpCode}] ${tp.name ? (tp.name.length > 25 ? tp.name.substring(0, 25) + '...' : tp.name) : 'Tugas TP'}`,
+            type: 'Tugas'
+          });
+        });
+      }
+
+      const taskList = Array.from(tasksMap.values());
+      const totalTasksCount = taskList.length;
+
+      let siswaTuntasCount = 0;
+      let siswaBelumCount = 0;
+
+      const classSheetRows: any[] = [];
+
+      classStudents.forEach((student: any, idx: number) => {
+        const sId = student.id;
+        const sNis = student.nis;
+
+        const studentGrades = classGrades.filter((g: any) => 
+          g.student_id === sId || g.student_id === sNis || g.nis === sNis || 
+          (g.student_name && student.namalengkap && g.student_name.toLowerCase().trim() === student.namalengkap.toLowerCase().trim())
+        );
+
+        let completedCount = 0;
+        const uncompletedTasks: string[] = [];
+        const taskScoresMap: Record<string, string | number> = {};
+
+        taskList.forEach(task => {
+          const matchedGrade = studentGrades.find((g: any) => {
+            if (g.description && String(g.description) === task.key) return true;
+            if (String(g.subject_type).toLowerCase() === task.key.toLowerCase()) return true;
+            const textCheck = getTpAndTugasText(g);
+            return textCheck.tugasText === task.label || `[${textCheck.tpText}] ${textCheck.tugasText}` === task.label;
+          });
+
+          if (matchedGrade && matchedGrade.score !== undefined && matchedGrade.score !== null && matchedGrade.score !== '') {
+            taskScoresMap[task.label] = Number(matchedGrade.score);
+            completedCount++;
+          } else {
+            taskScoresMap[task.label] = 'BELUM';
+            uncompletedTasks.push(task.label);
+          }
+        });
+
+        const pendingCount = totalTasksCount > 0 ? (totalTasksCount - completedCount) : 0;
+        const isTuntas = totalTasksCount > 0 ? (pendingCount === 0) : true;
+
+        if (isTuntas) {
+          siswaTuntasCount++;
+        } else {
+          siswaBelumCount++;
+          daftarSemuaSiswaBelum.push({
+            'NO': daftarSemuaSiswaBelum.length + 1,
+            'KELAS': cls,
+            'NIS': sNis || '-',
+            'NAMA SISWA': student.namalengkap,
+            'TOTAL TUGAS': totalTasksCount,
+            'SUDAH DIKERJAKAN': completedCount,
+            'BELUM DIKERJAKAN': pendingCount,
+            'RINCIAN TUGAS BELUM DIKERJAKAN': uncompletedTasks.join(', ') || '-',
+            'STATUS': 'BELUM TUNTAS'
+          });
+        }
+
+        const rowObj: any = {
+          'NO': idx + 1,
+          'NIS': sNis || '-',
+          'NAMA SISWA': student.namalengkap,
+          'KELAS': cls,
+          'STATUS PENGERJAAN': isTuntas ? 'TUNTAS SEMUA' : 'BELUM TUNTAS',
+          'TOTAL TUGAS': totalTasksCount,
+          'SUDAH DIKERJAKAN': completedCount,
+          'BELUM DIKERJAKAN': pendingCount,
+          'RINCIAN TUGAS BELUM DIKERJAKAN': uncompletedTasks.join(', ') || '-'
+        };
+
+        taskList.forEach(task => {
+          rowObj[task.label] = taskScoresMap[task.label];
+        });
+
+        classSheetRows.push(rowObj);
+      });
+
+      rekapGlobalRows.push({
+        'NO': rekapGlobalRows.length + 1,
+        'KELAS': cls,
+        'TOTAL SISWA': classStudents.length,
+        'SISWA TUNTAS': siswaTuntasCount,
+        'SISWA BELUM MENGERJAKAN': siswaBelumCount,
+        'TOTAL TUGAS': totalTasksCount,
+        'PERSENTASE KETUNTASAN': classStudents.length > 0 ? `${Math.round((siswaTuntasCount / classStudents.length) * 100)}%` : '0%'
+      });
+
+      // Tambahkan baris rekapitulasi di bagian bawah sheet kelas
+      classSheetRows.push({});
+      classSheetRows.push({
+        'NO': '',
+        'NIS': 'RINGKASAN',
+        'NAMA SISWA': `TOTAL SISWA: ${classStudents.length} | SISWA TUNTAS: ${siswaTuntasCount} | SISWA BELUM SELESAI: ${siswaBelumCount}`,
+        'KELAS': cls,
+        'STATUS PENGERJAAN': `KETUNTASAN: ${classStudents.length > 0 ? Math.round((siswaTuntasCount / classStudents.length) * 100) : 0}%`,
+        'TOTAL TUGAS': totalTasksCount,
+        'SUDAH DIKERJAKAN': siswaTuntasCount,
+        'BELUM DIKERJAKAN': siswaBelumCount
+      });
+
+      const wsClass = XLSX.utils.json_to_sheet(classSheetRows);
+
+      const colWidths: any[] = [
+        { wch: 6 },  // NO
+        { wch: 14 }, // NIS
+        { wch: 28 }, // NAMA SISWA
+        { wch: 10 }, // KELAS
+        { wch: 18 }, // STATUS
+        { wch: 14 }, // TOTAL TUGAS
+        { wch: 18 }, // SUDAH
+        { wch: 18 }, // BELUM
+        { wch: 45 }  // RINCIAN BELUM
+      ];
+      taskList.forEach(() => {
+        colWidths.push({ wch: 22 });
+      });
+      wsClass['!cols'] = colWidths;
+
+      const safeSheetName = getSafeSheetName(`Kelas ${cls}`);
+      XLSX.utils.book_append_sheet(workbook, wsClass, safeSheetName);
+    }
+
+    // Buat Sheet Rekap Siswa Belum Tuntas di urutan pertama
+    if (daftarSemuaSiswaBelum.length > 0) {
+      const wsSummary = XLSX.utils.json_to_sheet(daftarSemuaSiswaBelum);
+      wsSummary['!cols'] = [
+        { wch: 6 },  // NO
+        { wch: 10 }, // KELAS
+        { wch: 14 }, // NIS
+        { wch: 28 }, // NAMA SISWA
+        { wch: 14 }, // TOTAL TUGAS
+        { wch: 18 }, // SUDAH
+        { wch: 18 }, // BELUM
+        { wch: 50 }, // RINCIAN BELUM
+        { wch: 16 }  // STATUS
+      ];
+      workbook.SheetNames.unshift('REKAP_BELUM_TUNTAS');
+      workbook.Sheets['REKAP_BELUM_TUNTAS'] = wsSummary;
+    } else {
+      // Jika semua siswa sudah tuntas, tampilkan rekap ringkasan kelas
+      const wsSummary = XLSX.utils.json_to_sheet(rekapGlobalRows);
+      wsSummary['!cols'] = [
+        { wch: 6 },
+        { wch: 12 },
+        { wch: 14 },
+        { wch: 16 },
+        { wch: 24 },
+        { wch: 14 },
+        { wch: 22 }
+      ];
+      workbook.SheetNames.unshift('RINGKASAN_KELAS');
+      workbook.Sheets['RINGKASAN_KELAS'] = wsSummary;
+    }
+
+    const klsLabel = previewFilterKelas ? `Kelas_${previewFilterKelas}` : 'Semua_Kelas';
+    const semLabel = previewFilterSemester ? `Sem_${previewFilterSemester}` : 'Semua_Sem';
+    const filename = `Laporan_Siswa_Belum_Tugas_${klsLabel}_${semLabel}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    XLSX.writeFile(workbook, filename);
+
+    Swal.fire({
+      icon: 'success',
+      title: 'Laporan Excel Berhasil Dibuat!',
+      html: `
+        <div class="text-left text-xs space-y-2">
+          <p>Laporan monitoring siswa yang belum mengerjakan tugas berhasil diunduh dalam file Excel.</p>
+          <div class="bg-amber-50 p-2.5 rounded-xl border border-amber-200 text-amber-900 font-semibold space-y-1">
+            <p>✓ Dilengkapi sheet terpisah per kelas (misal: Kelas 7A, 7B, dst).</p>
+            <p>✓ Dilengkapi sheet <b>REKAP_BELUM_TUNTAS</b> untuk mengecek cepat seluruh siswa yang belum menyelesaikan tugas.</p>
+            <p>✓ Status setiap tugas ditandai dengan nilai asli atau <b>BELUM</b>.</p>
+          </div>
+          <p class="text-slate-400 text-[10px]">File: ${filename}</p>
+        </div>
+      `,
+      confirmButtonColor: '#059669',
+      heightAuto: false
+    });
+  };
+
   // Cancel edit helper
   const handleCancelEdit = () => {
     setEditingGradeId(null);
@@ -1386,15 +1689,26 @@ const TeacherInputGrades: React.FC = () => {
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleExportToExcel}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-sm shrink-0"
-              title="Export data nilai yang difilter ke file Excel"
-            >
-              <Download size={14} />
-              <span>Export Excel</span>
-            </button>
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <button
+                type="button"
+                onClick={handleExportBelumTugasExcel}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition shadow-sm active:scale-95"
+                title="Download laporan Excel untuk mengecek siswa yang belum mengerjakan tugas per kelas (Sheet per kelas)"
+              >
+                <FileCheck size={14} />
+                <span>Laporan Belum Tugas (Per Kelas)</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExportToExcel}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-sm shrink-0"
+                title="Export data nilai yang difilter ke file Excel"
+              >
+                <Download size={14} />
+                <span>Export Excel</span>
+              </button>
+            </div>
           </div>
 
           {/* FILTERS & SEARCH BAR BARIS DIBAWAH JUDUL */}
