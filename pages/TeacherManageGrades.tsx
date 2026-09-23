@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, BookOpen, Plus, Trash2, Edit2, Check, Settings, Save, Award, Scroll, 
@@ -187,21 +187,16 @@ const TeacherManageGrades: React.FC = () => {
         }
       });
 
-      // 2. Fetch grades records
+      // 2. Fetch grades records (Hanya untuk Asesmen TP / Tugas - JANGAN buat otomatis STS dan SAS)
       const gradeRecords = await db.getGradesByKelas(selectedKelas, selectedSemester);
       
       const integratedTpScores: Record<string, number> = {};
-      const integratedSts: Record<string, number | ''> = {};
-      const integratedSas: Record<string, number | ''> = {};
 
       gradeRecords.forEach(g => {
         const sId = g.student_id;
         const typeLower = String(g.subject_type).toLowerCase().trim();
-        if (typeLower === 'uts' || typeLower === 'pts') {
-          integratedSts[sId] = g.score;
-        } else if (typeLower === 'uas' || typeLower === 'pas') {
-          integratedSas[sId] = g.score;
-        } else {
+        // Jangan petakan ujian UTS/PTS/UAS/PAS secara otomatis ke STS dan SAS
+        if (typeLower !== 'uts' && typeLower !== 'pts' && typeLower !== 'uas' && typeLower !== 'pas') {
           if (g.description) {
             const scoreKey = `${sId}_${g.description}`;
             integratedTpScores[scoreKey] = g.score;
@@ -209,18 +204,22 @@ const TeacherManageGrades: React.FC = () => {
         }
       });
 
-      // 3. Fetch nilai_rapot records for custom Sikap & Katrol values
+      // 3. Fetch nilai_rapot records for custom Sikap, Katrol, dan nilai STS/SAS manual guru
       const kelolaNilaiRecords = await db.getKelolaNilai();
       const dbSikap: Record<string, string> = {};
       const dbKatrol: Record<string, number | ''> = {};
+      const dbSts: Record<string, number | ''> = {};
+      const dbSas: Record<string, number | ''> = {};
       
       kelolaNilaiRecords.forEach(rec => {
         const key = `${rec.student_id}_${rec.semester}`;
         if (rec.sikap !== undefined) dbSikap[key] = rec.sikap;
         if (rec.katrol !== undefined) dbKatrol[key] = rec.katrol === '' ? '' : Number(rec.katrol);
+        if (rec.sts !== undefined && rec.sts !== '') dbSts[key] = Number(rec.sts);
+        if (rec.sas !== undefined && rec.sas !== '') dbSas[key] = Number(rec.sas);
       });
 
-      // Merge with overalls state
+      // Merge with overalls state - TIDAK meng-generate otomatis STS dan SAS
       setOveralls(prevOveralls => {
         const updatedOveralls = { ...prevOveralls };
         students.forEach(s => {
@@ -239,8 +238,9 @@ const TeacherManageGrades: React.FC = () => {
 
           updatedOveralls[key] = {
             ...current,
-            sts: integratedSts[sId] !== undefined ? integratedSts[sId] : current.sts,
-            sas: integratedSas[sId] !== undefined ? integratedSas[sId] : current.sas,
+            // Nilai STS dan SAS tidak dibuat otomatis, pertahankan input manual guru atau biarkan kosong ''
+            sts: current.sts !== '' ? current.sts : (dbSts[key] !== undefined ? dbSts[key] : ''),
+            sas: current.sas !== '' ? current.sas : (dbSas[key] !== undefined ? dbSas[key] : ''),
             kehadiran: attendanceCounts[sId] || current.kehadiran,
             sikap: dbSikap[key] !== undefined ? dbSikap[key] : (current.sikap || ''),
             katrol: dbKatrol[key] !== undefined ? dbKatrol[key] : (current.katrol || '')
@@ -772,10 +772,16 @@ const TeacherManageGrades: React.FC = () => {
       return idxA - idxB;
     });
 
-  // Calculates a specific student's aggregate score for individual TPs
+  // Calculates a specific student's aggregate score for individual TPs (berdasarkan total tugas yang dibuat guru)
   const calculateStudentTpScore = (studentId: string, tpId: string): number | null => {
     const relatedAsms = assessments.filter(a => a.tpId === tpId);
-    if (relatedAsms.length === 0) return null;
+    if (relatedAsms.length === 0) {
+      const directScore = tpScores[`${studentId}_${tpId}`];
+      if (directScore !== undefined && directScore !== null && directScore !== '') {
+        return Number(directScore);
+      }
+      return null;
+    }
 
     let sum = 0;
     let count = 0;
@@ -788,10 +794,12 @@ const TeacherManageGrades: React.FC = () => {
       }
     });
 
-    return count > 0 ? parseFloat((sum / count).toFixed(1)) : null;
+    // Berdasarkan banyaknya tugas yang guru buat: semakin banyak tugas yang dinilai, nilai semakin optimal
+    const divisor = Math.max(relatedAsms.length, count);
+    return count > 0 ? parseFloat((sum / divisor).toFixed(1)) : null;
   };
 
-  // Calculates a specific student's grand average Daily Grade (Nilai Harian = avg of all defined TPs)
+  // Calculates a specific student's grand average Daily Grade (Nilai Harian dihitung proporsional terhadap total TP yang dibuat guru)
   const calculateStudentNilaiHarian = (studentId: string): number | null => {
     if (currentClassTps.length === 0) return null;
 
@@ -806,7 +814,9 @@ const TeacherManageGrades: React.FC = () => {
       }
     });
 
-    return count > 0 ? parseFloat((sum / count).toFixed(1)) : null;
+    // Nilai harian proporsional terhadap total seluruh TP yang dibuat guru untuk jenjang & semester ini
+    const divisor = Math.max(currentClassTps.length, count);
+    return count > 0 ? parseFloat((sum / divisor).toFixed(1)) : null;
   };
 
   // Attendance and Attitude scoring helper
@@ -838,8 +848,10 @@ const TeacherManageGrades: React.FC = () => {
     const overallKey = `${studentId}_${selectedSemester}`;
     const overallRecord = overalls[overallKey];
     
-    const sts = overallRecord && overallRecord.sts !== '' ? Number(overallRecord.sts) : 0;
-    const sas = overallRecord && overallRecord.sas !== '' ? Number(overallRecord.sas) : 0;
+    const hasSts = overallRecord && overallRecord.sts !== '' && overallRecord.sts !== undefined;
+    const hasSas = overallRecord && overallRecord.sas !== '' && overallRecord.sas !== undefined;
+    const sts = hasSts ? Number(overallRecord.sts) : 0;
+    const sas = hasSas ? Number(overallRecord.sas) : 0;
 
     const sakit = overallRecord?.kehadiran?.sakit || 0;
     const izin = overallRecord?.kehadiran?.izin || 0;
@@ -860,18 +872,27 @@ const TeacherManageGrades: React.FC = () => {
       };
     }
 
-    const wHarian = (weights.harian ?? 35) / 100;
-    const wSts = (weights.sts ?? 20) / 100;
-    const wSas = (weights.sas ?? 20) / 100;
-    const wKehadiran = (weights.kehadiran ?? 10) / 100;
-    const wSikap = (weights.sikap ?? 15) / 100;
+    // Hitung bobot dinamis: Jika STS atau SAS belum diisi manual oleh guru,
+    // nilai akhir tidak dipotong 0 melainkan diproporsionalkan secara adil
+    const wHarian = weights.harian ?? 35;
+    const wKehadiran = weights.kehadiran ?? 10;
+    const wSikap = weights.sikap ?? 15;
+    const wSts = weights.sts ?? 20;
+    const wSas = weights.sas ?? 20;
 
-    const result = 
-      (harian * wHarian) + 
-      (sts * wSts) + 
-      (sas * wSas) + 
-      (kehadiranScore * wKehadiran) + 
-      (sikapScore * wSikap);
+    let totalWeight = wHarian + wKehadiran + wSikap;
+    let weightedSum = (harian * wHarian) + (kehadiranScore * wKehadiran) + (sikapScore * wSikap);
+
+    if (hasSts) {
+      totalWeight += wSts;
+      weightedSum += (sts * wSts);
+    }
+    if (hasSas) {
+      totalWeight += wSas;
+      weightedSum += (sas * wSas);
+    }
+
+    const result = totalWeight > 0 ? (weightedSum / totalWeight) : harian;
 
     const katrol = overallRecord && overallRecord.katrol !== '' && overallRecord.katrol !== undefined ? Number(overallRecord.katrol) : 0;
     const finalCalculated = Math.round(result) + katrol;
@@ -938,6 +959,125 @@ const TeacherManageGrades: React.FC = () => {
 
     return { pred, desc };
   };
+
+  // Precompute class statistics (Rata-Rata Harian Kelas, Rata-Rata Keseluruhan Kelas, dll.)
+  const classStats = useMemo(() => {
+    if (students.length === 0) {
+      return {
+        harianAvg: null,
+        keseluruhanAvg: null,
+        stsAvg: null,
+        sasAvg: null,
+        finalAvg: null,
+        asmAvgs: {} as Record<string, number | null>,
+        tpAvgs: {} as Record<string, number | null>
+      };
+    }
+
+    let totalHarian = 0;
+    let countHarian = 0;
+    let totalKeseluruhan = 0;
+    let countKeseluruhan = 0;
+    let totalSts = 0;
+    let countSts = 0;
+    let totalSas = 0;
+    let countSas = 0;
+    let totalFinal = 0;
+    let countFinal = 0;
+
+    const asmSums: Record<string, number> = {};
+    const asmCounts: Record<string, number> = {};
+    const tpSums: Record<string, number> = {};
+    const tpCounts: Record<string, number> = {};
+
+    students.forEach(student => {
+      const studentId = student.id!;
+      const calculs = calculateStudentNilaiAkhir(studentId);
+      const overallKey = `${studentId}_${selectedSemester}`;
+      const over = overalls[overallKey];
+
+      // Harian
+      if (calculs.harian !== null) {
+        totalHarian += calculs.harian;
+        countHarian++;
+      }
+
+      // STS
+      if (over && over.sts !== '' && over.sts !== undefined) {
+        totalSts += Number(over.sts);
+        countSts++;
+      }
+
+      // SAS
+      if (over && over.sas !== '' && over.sas !== undefined) {
+        totalSas += Number(over.sas);
+        countSas++;
+      }
+
+      // Keseluruhan
+      const h = calculs.harian ?? 0;
+      const sts = calculs.sts ?? 0;
+      const sas = calculs.sas ?? 0;
+      const keh = calculs.kehadiranScore ?? 0;
+      const sik = calculs.sikapScore ?? 0;
+      const kesel = (h + sts + sas + keh + sik) / 5;
+      totalKeseluruhan += kesel;
+      countKeseluruhan++;
+
+      // Final
+      if (calculs.finalScore !== null) {
+        totalFinal += calculs.finalScore;
+        countFinal++;
+      }
+
+      // Assessments (Tab 1/Input)
+      currentClassAssessments.forEach(asm => {
+        const scoreKey = `${studentId}_${asm.id}`;
+        const v = tpScores[scoreKey];
+        if (v !== undefined && v !== null && v !== '') {
+          asmSums[asm.id] = (asmSums[asm.id] || 0) + Number(v);
+          asmCounts[asm.id] = (asmCounts[asm.id] || 0) + 1;
+        }
+      });
+
+      // TPs (Tab 2/Rekap)
+      currentClassTps.forEach(tp => {
+        const score = calculateStudentTpScore(studentId, tp.id);
+        if (score !== null) {
+          tpSums[tp.id] = (tpSums[tp.id] || 0) + score;
+          tpCounts[tp.id] = (tpCounts[tp.id] || 0) + 1;
+        }
+      });
+    });
+
+    const asmAvgs: Record<string, number | null> = {};
+    currentClassAssessments.forEach(asm => {
+      if (asmCounts[asm.id] && asmCounts[asm.id] > 0) {
+        asmAvgs[asm.id] = parseFloat((asmSums[asm.id] / asmCounts[asm.id]).toFixed(1));
+      } else {
+        asmAvgs[asm.id] = null;
+      }
+    });
+
+    const tpAvgs: Record<string, number | null> = {};
+    currentClassTps.forEach(tp => {
+      if (tpCounts[tp.id] && tpCounts[tp.id] > 0) {
+        tpAvgs[tp.id] = parseFloat((tpSums[tp.id] / tpCounts[tp.id]).toFixed(1));
+      } else {
+        tpAvgs[tp.id] = null;
+      }
+    });
+
+    return {
+      harianAvg: countHarian > 0 ? parseFloat((totalHarian / countHarian).toFixed(1)) : null,
+      keseluruhanAvg: countKeseluruhan > 0 ? parseFloat((totalKeseluruhan / countKeseluruhan).toFixed(1)) : null,
+      stsAvg: countSts > 0 ? parseFloat((totalSts / countSts).toFixed(1)) : null,
+      sasAvg: countSas > 0 ? parseFloat((totalSas / countSas).toFixed(1)) : null,
+      finalAvg: countFinal > 0 ? parseFloat((totalFinal / countFinal).toFixed(1)) : null,
+      asmAvgs,
+      tpAvgs
+    };
+  }, [students, currentClassAssessments, currentClassTps, tpScores, overalls, selectedSemester, weights]);
 
   // Handle live score editing inside the spreadsheet
   const handleScoreChange = (studentId: string, assessmentId: string, value: string) => {
@@ -1256,11 +1396,21 @@ const TeacherManageGrades: React.FC = () => {
         rowData[`NILAI ${tp.code}`] = score !== null ? score : '-';
       });
 
-      rowData['RATA-RATA HARIAN (NH)'] = calculs.harian !== null ? calculs.harian : '-';
+      const kesel = (() => {
+        const h = calculs.harian ?? 0;
+        const st = over && over.sts !== '' ? Number(over.sts) : 0;
+        const sa = over && over.sas !== '' ? Number(over.sas) : 0;
+        const k = calculs.kehadiranScore ?? 0;
+        const sk = calculs.sikapScore ?? 0;
+        return parseFloat(((h + st + sa + k + sk) / 5).toFixed(1));
+      })();
+
+      rowData['NILAI RATA-RATA HARIAN'] = calculs.harian !== null ? calculs.harian : '-';
       rowData['SUMATIF TENGAH SMT (STS)'] = over && over.sts !== '' ? over.sts : '-';
       rowData['SUMATIF AKHIR SMT (SAS)'] = over && over.sas !== '' ? over.sas : '-';
       rowData['NILAI SIKAP'] = over && over.sikap ? over.sikap : getAttitudeTextFromScore(calculs.sikapScore);
       rowData['SKOR KEHADIRAN (%)'] = `${calculs.kehadiranScore}%`;
+      rowData['NILAI RATA-RATA KESELURUHAN'] = kesel;
       rowData['NILAI AKHIR RAPOR'] = calculs.finalScore !== null ? calculs.finalScore : '-';
       rowData['PREDIKAT'] = predObj.pred;
       rowData['DESKRIPSI CP'] = predObj.desc;
@@ -1799,6 +1949,41 @@ const TeacherManageGrades: React.FC = () => {
           </div>
 
           {/* SPREADSHEET WRAPPER AND CARIOUS COLS */}
+          {/* STATS SUMMARY PILLS */}
+          {hasGenerated && students.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-slate-50/80 rounded-2xl border border-slate-200/80">
+              <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200/80 rounded-xl shadow-xs">
+                <div>
+                  <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">Nilai Rata-Rata Harian (Kelas)</span>
+                  <span className="text-[10px] text-amber-700">Rata-rata kumulatif seluruh TP & Tugas</span>
+                </div>
+                <span className="text-xl font-black font-mono text-amber-900 bg-amber-200/80 px-3 py-1 rounded-lg shadow-xs">
+                  {classStats.harianAvg !== null ? classStats.harianAvg : '-'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200/80 rounded-xl shadow-xs">
+                <div>
+                  <span className="text-[10px] font-black text-blue-800 uppercase tracking-wider block">Nilai Rata-Rata Keseluruhan (Kelas)</span>
+                  <span className="text-[10px] text-blue-700">Rata-rata Ledger Keseluruhan Komponen</span>
+                </div>
+                <span className="text-xl font-black font-mono text-blue-900 bg-blue-200/80 px-3 py-1 rounded-lg shadow-xs">
+                  {classStats.keseluruhanAvg !== null ? classStats.keseluruhanAvg : '-'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-200/80 rounded-xl shadow-xs">
+                <div>
+                  <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block">Rata-Rata Nilai Akhir Rapor</span>
+                  <span className="text-[10px] text-emerald-700">Hasil pembobotan nilai rapor akhir</span>
+                </div>
+                <span className="text-xl font-black font-mono text-emerald-900 bg-emerald-200/80 px-3 py-1 rounded-lg shadow-xs">
+                  {classStats.finalAvg !== null ? classStats.finalAvg : '-'}
+                </span>
+              </div>
+            </div>
+          )}
+
           {!hasGenerated ? (
             <div className="bg-slate-50/70 p-8 md:p-12 rounded-3xl border border-slate-200 border-dashed text-center space-y-4 max-w-xl mx-auto my-6">
               <div className="w-16 h-16 bg-emerald-100 text-emerald-800 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
@@ -1847,9 +2032,20 @@ const TeacherManageGrades: React.FC = () => {
                       );
                     })}
 
+                    {/* KOLOM: NILAI RATA-RATA HARIAN */}
+                    <th className="p-3 text-[9px] font-black text-center text-amber-900 bg-amber-100/80 w-28 border-r border-slate-200 uppercase tracking-wider">
+                      NILAI RATA-RATA HARIAN
+                    </th>
+
                     {/* Non TP columns */}
-                    <th className="p-2.5 text-[9px] font-black text-center text-rose-800 bg-rose-50/30 w-24 border-r border-slate-200 uppercase tracking-wider">Nilai STS</th>
-                    <th className="p-2.5 text-[9px] font-black text-center text-indigo-800 bg-indigo-50/30 w-24 border-r border-slate-200 uppercase tracking-wider">Nilai SAS</th>
+                    <th className="p-2.5 text-[9px] font-black text-center text-rose-800 bg-rose-50/40 w-24 border-r border-slate-200 uppercase tracking-wider">
+                      Nilai STS
+                      <span className="block text-[7px] text-rose-600 font-semibold lowercase tracking-normal">(input manual)</span>
+                    </th>
+                    <th className="p-2.5 text-[9px] font-black text-center text-indigo-800 bg-indigo-50/40 w-24 border-r border-slate-200 uppercase tracking-wider">
+                      Nilai SAS
+                      <span className="block text-[7px] text-indigo-600 font-semibold lowercase tracking-normal">(input manual)</span>
+                    </th>
                     
                     {/* Attidute selection */}
                     <th className="p-2.5 text-[9px] font-black text-center text-slate-500 w-28 border-r border-slate-200">Sikap</th>
@@ -1862,8 +2058,10 @@ const TeacherManageGrades: React.FC = () => {
                     {/* Katrol column */}
                     <th className="p-2.5 text-[9px] font-black text-center text-amber-800 bg-amber-50/20 w-24 border-r border-slate-200 uppercase tracking-wider">Katrol</th>
 
-                    {/* Rata-Rata dari semua penilaian */}
-                    <th className="p-3 text-[10px] font-black text-center text-blue-800 bg-blue-50 w-24 border-r border-slate-200 uppercase tracking-wider">Rata-Rata</th>
+                    {/* KOLOM: NILAI RATA-RATA KESELURUHAN */}
+                    <th className="p-3 text-[10px] font-black text-center text-blue-900 bg-blue-100/80 w-28 border-r border-slate-200 uppercase tracking-wider">
+                      NILAI RATA-RATA KESELURUHAN
+                    </th>
 
                     {/* Computations indicators (READ ONLY LIVE) */}
                     <th className="p-3 text-[10px] font-black text-center text-emerald-800 bg-emerald-50 w-24">Nilai Akhir</th>
@@ -1906,14 +2104,53 @@ const TeacherManageGrades: React.FC = () => {
                           );
                         })}
 
-                        {/* STS input (READ-ONLY) */}
-                        <td className="p-2 text-center border-r border-slate-100 bg-rose-50/10 font-bold font-mono text-xs text-rose-900">
-                          {over.sts !== '' ? over.sts : '-'}
+                        {/* KOLOM: NILAI RATA-RATA HARIAN */}
+                        <td className="p-2 text-center border-r border-slate-100 bg-amber-50/50 font-black font-mono text-xs text-amber-900">
+                          {calculs.harian !== null ? calculs.harian : '-'}
                         </td>
 
-                        {/* SAS input (READ-ONLY) */}
-                        <td className="p-2 text-center border-r border-slate-100 bg-indigo-50/10 font-bold font-mono text-xs text-indigo-900">
-                          {over.sas !== '' ? over.sas : '-'}
+                        {/* STS input (MANUAL INPUT OLEH GURU) */}
+                        <td className="p-1 border-r border-slate-100 bg-rose-50/15">
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            value={over.sts !== '' && over.sts !== undefined ? over.sts : ''}
+                            placeholder="-"
+                            onChange={(e) => {
+                              const val = e.target.value.trim();
+                              if (val === '') {
+                                handleOverallChange(studentId, 'sts', '');
+                                return;
+                              }
+                              const num = parseInt(val, 10);
+                              if (isNaN(num) || num < 0 || num > 100) return;
+                              handleOverallChange(studentId, 'sts', num);
+                            }}
+                            className="w-full h-8 text-center text-xs font-black text-rose-900 rounded-lg border border-rose-200 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 font-mono outline-none bg-white hover:bg-rose-50/30 transition placeholder:text-slate-300"
+                            title="Input Nilai STS Siswa (0 - 100). Kosongkan jika belum ada STS."
+                          />
+                        </td>
+
+                        {/* SAS input (MANUAL INPUT OLEH GURU) */}
+                        <td className="p-1 border-r border-slate-100 bg-indigo-50/15">
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            value={over.sas !== '' && over.sas !== undefined ? over.sas : ''}
+                            placeholder="-"
+                            onChange={(e) => {
+                              const val = e.target.value.trim();
+                              if (val === '') {
+                                handleOverallChange(studentId, 'sas', '');
+                                return;
+                              }
+                              const num = parseInt(val, 10);
+                              if (isNaN(num) || num < 0 || num > 100) return;
+                              handleOverallChange(studentId, 'sas', num);
+                            }}
+                            className="w-full h-8 text-center text-xs font-black text-indigo-900 rounded-lg border border-indigo-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono outline-none bg-white hover:bg-indigo-50/30 transition placeholder:text-slate-300"
+                            title="Input Nilai SAS Siswa (0 - 100). Kosongkan jika belum ada SAS."
+                          />
                         </td>
 
                         {/* Attitude (EDITABLE) */}
@@ -1963,8 +2200,8 @@ const TeacherManageGrades: React.FC = () => {
                           />
                         </td>
 
-                        {/* Rata-Rata dari semua penilaian (TP average, STS, SAS, Kehadiran, Sikap) */}
-                        <td className="p-2 text-center border-r border-slate-100 bg-blue-50/10 font-bold font-mono text-xs text-blue-900">
+                        {/* KOLOM: NILAI RATA-RATA KESELURUHAN (Harian, STS, SAS, Kehadiran, Sikap) */}
+                        <td className="p-2 text-center border-r border-slate-100 bg-blue-50/20 font-black font-mono text-xs text-blue-900">
                           {(() => {
                             const h = calculs.harian ?? 0;
                             const sts = calculs.sts ?? 0;
@@ -1985,6 +2222,67 @@ const TeacherManageGrades: React.FC = () => {
                     );
                   })}
                 </tbody>
+
+                {/* BARIS RATA-RATA HARIAN & KESELURUHAN (TFOOT) */}
+                <tfoot className="border-t-2 border-slate-300">
+                  {/* BARIS 1: NILAI RATA-RATA HARIAN (KELAS) */}
+                  <tr className="bg-amber-50/90 font-bold border-b border-amber-200/80">
+                    <td colSpan={2} className="p-3 text-right text-[10px] font-black uppercase text-amber-900 sticky left-0 bg-amber-100/95 z-10 border-r border-amber-200">
+                      NILAI RATA-RATA HARIAN
+                    </td>
+                    {currentClassAssessments.map(asm => (
+                      <td key={asm.id} className="p-2 text-center border-r border-amber-200/60 font-mono text-[11px] font-black text-amber-900">
+                        {classStats.asmAvgs[asm.id] !== null ? classStats.asmAvgs[asm.id] : '-'}
+                      </td>
+                    ))}
+                    {/* Nilai Rata-Rata Harian Kelas */}
+                    <td className="p-2 text-center border-r border-amber-300 font-mono text-xs font-black bg-amber-200/90 text-amber-950">
+                      {classStats.harianAvg !== null ? classStats.harianAvg : '-'}
+                    </td>
+                    {/* Non TP columns in this row */}
+                    <td colSpan={8} className="p-2.5 text-left px-4 text-[10px] text-amber-900 font-bold">
+                      Rata-Rata Harian Seluruh Siswa: <span className="font-mono underline text-amber-950 font-black">{classStats.harianAvg ?? '-'}</span>
+                    </td>
+                  </tr>
+
+                  {/* BARIS 2: NILAI RATA-RATA KESELURUHAN (KELAS) */}
+                  <tr className="bg-blue-50/90 font-bold">
+                    <td colSpan={2} className="p-3 text-right text-[10px] font-black uppercase text-blue-900 sticky left-0 bg-blue-100/95 z-10 border-r border-blue-200">
+                      NILAI RATA-RATA KESELURUHAN
+                    </td>
+                    {currentClassAssessments.map(asm => (
+                      <td key={asm.id} className="p-2 text-center border-r border-blue-100 font-mono text-[10px] text-slate-400">
+                        -
+                      </td>
+                    ))}
+                    {/* Harian */}
+                    <td className="p-2 text-center border-r border-blue-100 font-mono text-xs font-black bg-amber-100/60 text-amber-900">
+                      {classStats.harianAvg !== null ? classStats.harianAvg : '-'}
+                    </td>
+                    {/* STS */}
+                    <td className="p-2 text-center border-r border-blue-100 font-mono text-xs font-black bg-rose-50/70 text-rose-900">
+                      {classStats.stsAvg !== null ? classStats.stsAvg : '-'}
+                    </td>
+                    {/* SAS */}
+                    <td className="p-2 text-center border-r border-blue-100 font-mono text-xs font-black bg-indigo-50/70 text-indigo-900">
+                      {classStats.sasAvg !== null ? classStats.sasAvg : '-'}
+                    </td>
+                    {/* Sikap, Sakit, Izin, Alpha, Katrol */}
+                    <td className="p-2 text-center border-r border-blue-100 text-slate-400 font-mono text-[10px]">-</td>
+                    <td className="p-2 text-center border-r border-blue-100 text-slate-400 font-mono text-[10px]">-</td>
+                    <td className="p-2 text-center border-r border-blue-100 text-slate-400 font-mono text-[10px]">-</td>
+                    <td className="p-2 text-center border-r border-blue-100 text-slate-400 font-mono text-[10px]">-</td>
+                    <td className="p-2 text-center border-r border-blue-100 text-slate-400 font-mono text-[10px]">-</td>
+                    {/* NILAI RATA-RATA KESELURUHAN */}
+                    <td className="p-2 text-center border-r border-blue-300 font-mono text-xs font-black bg-blue-200/90 text-blue-950">
+                      {classStats.keseluruhanAvg !== null ? classStats.keseluruhanAvg : '-'}
+                    </td>
+                    {/* Nilai Akhir */}
+                    <td className="p-2 text-center font-mono text-xs font-black bg-emerald-100/90 text-emerald-950">
+                      {classStats.finalAvg !== null ? classStats.finalAvg : '-'}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}
@@ -2046,9 +2344,10 @@ const TeacherManageGrades: React.FC = () => {
                     {currentClassTps.map(tp => (
                       <th key={tp.id} className="p-2.5 text-center w-20 bg-amber-50/20">{tp.code}</th>
                     ))}
-                    <th className="p-2.5 text-center w-24">Rata Harian</th>
+                    <th className="p-2.5 text-center w-28 bg-amber-100/70 text-amber-900 font-black uppercase">NILAI RATA-RATA HARIAN</th>
                     <th className="p-2.5 text-center w-20">STS</th>
                     <th className="p-2.5 text-center w-20">SAS</th>
+                    <th className="p-2.5 text-center w-28 bg-blue-100/70 text-blue-900 font-black uppercase">NILAI RATA-RATA KESELURUHAN</th>
                     <th className="p-3 text-center w-24 bg-emerald-50 text-emerald-800 font-bold">NILAI AKHIR</th>
                     <th className="p-3 text-center w-14">Pred</th>
                     <th className="p-3 w-64 text-left leading-tight font-medium text-[8px] text-slate-400">Deskripsi Penguasaan Materi</th>
@@ -2092,8 +2391,8 @@ const TeacherManageGrades: React.FC = () => {
                           );
                         })}
 
-                        {/* Calculations columns status */}
-                        <td className="p-2.5 text-center font-semibold text-slate-500">
+                        {/* KOLOM: NILAI RATA-RATA HARIAN */}
+                        <td className="p-2.5 text-center font-black text-amber-900 font-mono bg-amber-50/30">
                           {calculs.harian !== null ? calculs.harian : '-'}
                         </td>
                         <td className="p-2.5 text-center font-semibold text-rose-700">
@@ -2101,6 +2400,18 @@ const TeacherManageGrades: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-center font-semibold text-indigo-700">
                           {sas}
+                        </td>
+
+                        {/* KOLOM: NILAI RATA-RATA KESELURUHAN */}
+                        <td className="p-2.5 text-center font-black text-blue-900 font-mono bg-blue-50/30">
+                          {(() => {
+                            const h = calculs.harian ?? 0;
+                            const st = over && over.sts !== '' ? Number(over.sts) : 0;
+                            const sa = over && over.sas !== '' ? Number(over.sas) : 0;
+                            const k = calculs.kehadiranScore ?? 0;
+                            const sk = calculs.sikapScore ?? 0;
+                            return parseFloat(((h + st + sa + k + sk) / 5).toFixed(1));
+                          })()}
                         </td>
 
                         {/* FINAL SCORE */}
@@ -2145,6 +2456,58 @@ const TeacherManageGrades: React.FC = () => {
                     );
                   })}
                 </tbody>
+
+                {/* BARIS RATA-RATA HARIAN & KESELURUHAN (TFOOT) */}
+                <tfoot className="border-t-2 border-slate-200">
+                  {/* BARIS: NILAI RATA-RATA HARIAN (KELAS) */}
+                  <tr className="bg-amber-50/90 font-bold border-b border-amber-200/80">
+                    <td colSpan={2} className="p-2.5 text-right text-[10px] font-black uppercase text-amber-900">
+                      NILAI RATA-RATA HARIAN
+                    </td>
+                    {currentClassTps.map(tp => (
+                      <td key={tp.id} className="p-2 text-center font-mono text-[10px] font-black text-amber-900 bg-amber-50/40">
+                        {classStats.tpAvgs[tp.id] !== null ? classStats.tpAvgs[tp.id] : '-'}
+                      </td>
+                    ))}
+                    {/* Rata-Rata Harian */}
+                    <td className="p-2 text-center font-mono text-xs font-black bg-amber-200/90 text-amber-950">
+                      {classStats.harianAvg !== null ? classStats.harianAvg : '-'}
+                    </td>
+                    <td colSpan={8} className="p-2.5 text-left px-4 text-[10px] text-amber-900 font-bold">
+                      Rata-Rata Harian Seluruh Siswa: <span className="font-mono underline text-amber-950 font-black">{classStats.harianAvg ?? '-'}</span>
+                    </td>
+                  </tr>
+
+                  {/* BARIS: NILAI RATA-RATA KESELURUHAN (KELAS) */}
+                  <tr className="bg-blue-50/90 font-bold">
+                    <td colSpan={2} className="p-2.5 text-right text-[10px] font-black uppercase text-blue-900">
+                      NILAI RATA-RATA KESELURUHAN
+                    </td>
+                    {currentClassTps.map(tp => (
+                      <td key={tp.id} className="p-2 text-center font-mono text-[10px] text-slate-400">
+                        -
+                      </td>
+                    ))}
+                    <td className="p-2 text-center font-mono text-xs font-black bg-amber-100/60 text-amber-900">
+                      {classStats.harianAvg !== null ? classStats.harianAvg : '-'}
+                    </td>
+                    <td className="p-2 text-center font-mono text-xs font-black bg-rose-50/70 text-rose-900">
+                      {classStats.stsAvg !== null ? classStats.stsAvg : '-'}
+                    </td>
+                    <td className="p-2 text-center font-mono text-xs font-black bg-indigo-50/70 text-indigo-900">
+                      {classStats.sasAvg !== null ? classStats.sasAvg : '-'}
+                    </td>
+                    <td className="p-2 text-center font-mono text-xs font-black bg-blue-200/90 text-blue-950">
+                      {classStats.keseluruhanAvg !== null ? classStats.keseluruhanAvg : '-'}
+                    </td>
+                    <td className="p-2 text-center font-mono text-xs font-black bg-emerald-100/90 text-emerald-950">
+                      {classStats.finalAvg !== null ? classStats.finalAvg : '-'}
+                    </td>
+                    <td colSpan={4} className="p-2.5 text-left px-4 text-[10px] text-blue-900 font-bold">
+                      Rata-Rata Keseluruhan Seluruh Siswa: <span className="font-mono underline text-blue-950 font-black">{classStats.keseluruhanAvg ?? '-'}</span>
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

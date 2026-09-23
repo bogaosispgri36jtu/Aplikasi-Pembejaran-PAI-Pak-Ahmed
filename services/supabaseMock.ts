@@ -1439,25 +1439,19 @@ class DatabaseService {
           return codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
         });
 
-      // 3. Map student's grades into assessment scores
+      // 3. Map student's grades into assessment scores (JANGAN buat otomatis STS dan SAS)
       const tpScores: Record<string, number> = {};
-      let studentSts: number | '' = '';
-      let studentSas: number | '' = '';
 
       studentGrades.forEach(g => {
         const typeLower = String(g.subject_type).toLowerCase().trim();
-        if (typeLower === 'uts' || typeLower === 'pts') {
-          studentSts = g.score;
-        } else if (typeLower === 'uas' || typeLower === 'pas') {
-          studentSas = g.score;
-        } else {
+        if (typeLower !== 'uts' && typeLower !== 'pts' && typeLower !== 'uas' && typeLower !== 'pas') {
           if (g.description) {
             tpScores[g.description] = g.score;
           }
         }
       });
 
-      // 4. Calculate TP scores & Nilai Harian Avg
+      // 4. Calculate TP scores & Nilai Harian Avg (Berdasarkan jumlah TP & Tugas yang dibuat guru)
       let sumHarian = 0;
       let countHarian = 0;
 
@@ -1475,13 +1469,25 @@ class DatabaseService {
             }
           });
           if (countAsm > 0) {
-            sumHarian += sumAsm / countAsm;
+            // Berdasarkan banyaknya tugas yang guru buat: semakin banyak nilai yang guru input, semakin optimal nilainya
+            const tpDivisor = Math.max(tpAsms.length, countAsm);
+            const tpScore = sumAsm / tpDivisor;
+            sumHarian += tpScore;
+            countHarian++;
+          }
+        } else {
+          // Jika tidak ada sub-asesmen spesifik, cek apakah ada nilai langsung untuk TP ini
+          const val = tpScores[tp.id] || tpScores[tp.code];
+          if (val !== undefined && val !== null && val !== '') {
+            sumHarian += Number(val);
             countHarian++;
           }
         }
       });
 
-      const harianAvg = countHarian > 0 ? parseFloat((sumHarian / countHarian).toFixed(1)) : null;
+      // Nilai Rata-rata Harian dihitung secara proporsional terhadap total TP yang dibuat guru untuk jenjang & semester ini
+      const harianDivisor = currentClassTps.length > 0 ? Math.max(currentClassTps.length, countHarian) : countHarian;
+      const harianAvg = countHarian > 0 ? parseFloat((sumHarian / harianDivisor).toFixed(1)) : null;
 
       // 5. Fetch existing nilai_rapot record to hold attitudes, katrol etc.
       const kelolaList = this.getLocalTable<any>('nilai_rapot');
@@ -1526,22 +1532,32 @@ class DatabaseService {
 
       const katrol = existingKelola.katrol !== undefined && existingKelola.katrol !== '' ? Number(existingKelola.katrol) : 0;
 
+      // STS dan SAS manual guru dari existingKelola (tidak dibuat otomatis)
+      const studentSts: number | '' = existingKelola.sts !== undefined && existingKelola.sts !== '' ? Number(existingKelola.sts) : '';
+      const studentSas: number | '' = existingKelola.sas !== undefined && existingKelola.sas !== '' ? Number(existingKelola.sas) : '';
+
       // 7. Calculate Nilai Akhir
       let finalScore: number | '' = '';
       if (harianAvg !== null) {
-        const wHarian = (weights.harian ?? 35) / 100;
-        const wSts = (weights.sts ?? 20) / 100;
-        const wSas = (weights.sas ?? 20) / 100;
-        const wKehadiran = (weights.kehadiran ?? 10) / 100;
-        const wSikap = (weights.sikap ?? 15) / 100;
+        const wHarian = weights.harian ?? 35;
+        const wKehadiran = weights.kehadiran ?? 10;
+        const wSikap = weights.sikap ?? 15;
+        const wSts = weights.sts ?? 20;
+        const wSas = weights.sas ?? 20;
 
-        const result = 
-          (harianAvg * wHarian) + 
-          ((studentSts !== '' ? studentSts : 0) * wSts) + 
-          ((studentSas !== '' ? studentSas : 0) * wSas) + 
-          (kehadiranScore * wKehadiran) + 
-          (sikapScore * wSikap);
+        let totalWeight = wHarian + wKehadiran + wSikap;
+        let weightedSum = (harianAvg * wHarian) + (kehadiranScore * wKehadiran) + (sikapScore * wSikap);
 
+        if (studentSts !== '') {
+          totalWeight += wSts;
+          weightedSum += (Number(studentSts) * wSts);
+        }
+        if (studentSas !== '') {
+          totalWeight += wSas;
+          weightedSum += (Number(studentSas) * wSas);
+        }
+
+        const result = totalWeight > 0 ? (weightedSum / totalWeight) : harianAvg;
         finalScore = Math.min(100, Math.max(0, Math.round(result) + katrol));
       }
 

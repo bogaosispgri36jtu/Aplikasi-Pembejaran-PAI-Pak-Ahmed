@@ -231,10 +231,28 @@ const PublicGrades: React.FC = () => {
       return codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
     });
 
-  // Helper extraction untuk mencocokkan TP dari deskripsi/nama/kode
+  // Helper extraction untuk mencocokkan TP dari deskripsi/nama/kode (berdasarkan total tugas & TP yang dibuat guru)
   const getTpScore = (tp: any) => {
     const tpId = String(tp.id || '').trim();
     const relatedAsms = localAsms.filter((a: any) => String(a.tpId) === tpId);
+
+    // Hitung juga ujian/tugas online yang dibuat guru untuk TP ini
+    const examTasks: any[] = [];
+    localExams.forEach((e: any) => {
+      let foundTpId = e.tp_id;
+      if (!foundTpId && e.assessment_id) {
+        const asm = localAsms.find((a: any) => String(a.id) === String(e.assessment_id));
+        if (asm && asm.tpId) foundTpId = asm.tpId;
+      }
+      if (String(foundTpId) === tpId) {
+        const examIdStr = e.assessment_id || e.title;
+        if (!relatedAsms.some((a: any) => String(a.id) === String(examIdStr))) {
+          examTasks.push({ id: examIdStr, name: e.title });
+        }
+      }
+    });
+
+    const totalTeacherTasks = relatedAsms.length + examTasks.length;
 
     let sum = 0;
     let count = 0;
@@ -243,6 +261,18 @@ const PublicGrades: React.FC = () => {
       relatedAsms.forEach((asm: any) => {
         const scoreKey1 = `${student?.id}_${asm.id}`;
         const scoreKey2 = `${student?.nis}_${asm.id}`;
+        const scoreVal = mergedTpScores[scoreKey1] !== undefined ? mergedTpScores[scoreKey1] : mergedTpScores[scoreKey2];
+        if (scoreVal !== undefined && scoreVal !== null && scoreVal !== '') {
+          sum += Number(scoreVal);
+          count++;
+        }
+      });
+    }
+
+    if (examTasks.length > 0) {
+      examTasks.forEach((ex: any) => {
+        const scoreKey1 = `${student?.id}_${ex.id}`;
+        const scoreKey2 = `${student?.nis}_${ex.id}`;
         const scoreVal = mergedTpScores[scoreKey1] !== undefined ? mergedTpScores[scoreKey1] : mergedTpScores[scoreKey2];
         if (scoreVal !== undefined && scoreVal !== null && scoreVal !== '') {
           sum += Number(scoreVal);
@@ -289,21 +319,13 @@ const PublicGrades: React.FC = () => {
       });
     }
 
-    const calculatedScore = count > 0 ? parseFloat((sum / count).toFixed(1)) : null;
-    console.log(`[PublicGrades Match] TP '${tp.code || tp.id}' (${tp.name || '-'}) -> Skor: ${calculatedScore ?? 'Belum ada'}`, {
-      tpId: tp.id,
-      tpCode: tp.code,
-      tpName: tp.name,
-      studentId: student?.id,
-      studentNis: student?.nis,
-      relatedAsmsCount: relatedAsms.length,
-      matchedCount: count,
-      totalSum: sum
-    });
+    // Berdasarkan banyaknya tugas yang guru buat: semakin banyak tugas yang dinilai, nilai rata-rata semakin optimal
+    const divisor = totalTeacherTasks > 0 ? Math.max(totalTeacherTasks, count) : count;
+    const calculatedScore = count > 0 ? parseFloat((sum / divisor).toFixed(1)) : null;
     return calculatedScore;
   };
 
-  // Nilai Harian (Rata-rata seluruh TP)
+  // Nilai Harian (Rata-rata seluruh TP proporsional terhadap total TP yang dibuat guru)
   const getNilaiHarian = () => {
     if (currentClassTps.length === 0) return null;
 
@@ -318,7 +340,8 @@ const PublicGrades: React.FC = () => {
       }
     });
 
-    return count > 0 ? parseFloat((sum / count).toFixed(1)) : null;
+    const divisor = Math.max(currentClassTps.length, count);
+    return count > 0 ? parseFloat((sum / divisor).toFixed(1)) : null;
   };
 
   const harian = getNilaiHarian();
@@ -380,9 +403,6 @@ const PublicGrades: React.FC = () => {
 
   // NILAI AKHIR RAPOR (INTEGRATIVE / WEIGHTED):
   const realNilaiAkhir = (() => {
-    if (kelolaRecord && kelolaRecord.nilai_akhir !== '' && kelolaRecord.nilai_akhir !== null) {
-      return Number(kelolaRecord.nilai_akhir);
-    }
     if (rawHarian !== null) {
       const wHarian = (localWeights.harian ?? 35) / 100;
       const wSts = (localWeights.sts ?? 20) / 100;
@@ -398,6 +418,9 @@ const PublicGrades: React.FC = () => {
         (sikapScore * wSikap);
 
       return Math.min(100, Math.max(0, Math.round(result) + katrol));
+    }
+    if (kelolaRecord && kelolaRecord.nilai_akhir !== '' && kelolaRecord.nilai_akhir !== null) {
+      return Number(kelolaRecord.nilai_akhir);
     }
     // Fallback ke baris Nilai Akhir synched di tabel Nilai
     const naEntry = filteredGrades.find(g => g.description && g.description.includes('Nilai Akhir Rapor'));

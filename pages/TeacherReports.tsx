@@ -284,7 +284,8 @@ const TeacherReports: React.FC = () => {
             });
 
             if (count > 0) {
-              const score = parseFloat((sum / count).toFixed(1));
+              const divisor = Math.max(relatedAsms.length, count);
+              const score = parseFloat((sum / divisor).toFixed(1));
               studentScores.push(score);
               evaluatedCount++;
               if (score >= kkmTargetValue) {
@@ -450,10 +451,16 @@ const TeacherReports: React.FC = () => {
         return codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
       });
 
-    // Helper functions for scoring
+    // Helper functions for scoring (berdasarkan tugas & TP yang dibuat guru)
     const calculateStudentTpScore = (studentId: string, tpId: string): number | null => {
       const relatedAsms = assessmentsList.filter((a: any) => a.tpId === tpId);
-      if (relatedAsms.length === 0) return null;
+      if (relatedAsms.length === 0) {
+        const directScore = tpScores[`${studentId}_${tpId}`];
+        if (directScore !== undefined && directScore !== null && directScore !== '') {
+          return Number(directScore);
+        }
+        return null;
+      }
 
       let sum = 0;
       let count = 0;
@@ -465,7 +472,9 @@ const TeacherReports: React.FC = () => {
           count++;
         }
       });
-      return count > 0 ? parseFloat((sum / count).toFixed(1)) : null;
+      // Berdasarkan banyaknya tugas yang guru buat: semakin banyak tugas yang dinilai, nilai semakin optimal
+      const divisor = Math.max(relatedAsms.length, count);
+      return count > 0 ? parseFloat((sum / divisor).toFixed(1)) : null;
     };
 
     const calculateStudentNilaiHarian = (studentId: string): number | null => {
@@ -479,7 +488,9 @@ const TeacherReports: React.FC = () => {
           count++;
         }
       });
-      return count > 0 ? parseFloat((sum / count).toFixed(1)) : null;
+      // Nilai harian proporsional terhadap total seluruh TP yang dibuat guru untuk jenjang & semester ini
+      const divisor = Math.max(activeTps.length, count);
+      return count > 0 ? parseFloat((sum / divisor).toFixed(1)) : null;
     };
 
     const getAttendanceScore = (sakit: number = 0, izin: number = 0, alpha: number = 0): number => {
@@ -500,8 +511,10 @@ const TeacherReports: React.FC = () => {
       const overallKey = `${studentId}_${targetSem}`;
       const overallRecord = overalls[overallKey];
       
-      const sts = overallRecord && overallRecord.sts !== '' ? Number(overallRecord.sts) : 0;
-      const sas = overallRecord && overallRecord.sas !== '' ? Number(overallRecord.sas) : 0;
+      const hasSts = overallRecord && overallRecord.sts !== '' && overallRecord.sts !== undefined;
+      const hasSas = overallRecord && overallRecord.sas !== '' && overallRecord.sas !== undefined;
+      const sts = hasSts ? Number(overallRecord.sts) : 0;
+      const sas = hasSas ? Number(overallRecord.sas) : 0;
 
       const sakit = overallRecord?.kehadiran?.sakit || 0;
       const izin = overallRecord?.kehadiran?.izin || 0;
@@ -522,18 +535,25 @@ const TeacherReports: React.FC = () => {
         };
       }
 
-      const wHarian = (weights.harian ?? 35) / 100;
-      const wSts = (weights.sts ?? 20) / 100;
-      const wSas = (weights.sas ?? 20) / 100;
-      const wKehadiran = (weights.kehadiran ?? 10) / 100;
-      const wSikap = (weights.sikap ?? 15) / 100;
+      const wHarian = weights.harian ?? 35;
+      const wKehadiran = weights.kehadiran ?? 10;
+      const wSikap = weights.sikap ?? 15;
+      const wSts = weights.sts ?? 20;
+      const wSas = weights.sas ?? 20;
 
-      const result = 
-        (harian * wHarian) + 
-        (sts * wSts) + 
-        (sas * wSas) + 
-        (kehadiranScore * wKehadiran) + 
-        (sikapScore * wSikap);
+      let totalWeight = wHarian + wKehadiran + wSikap;
+      let weightedSum = (harian * wHarian) + (kehadiranScore * wKehadiran) + (sikapScore * wSikap);
+
+      if (hasSts) {
+        totalWeight += wSts;
+        weightedSum += (sts * wSts);
+      }
+      if (hasSas) {
+        totalWeight += wSas;
+        weightedSum += (sas * wSas);
+      }
+
+      const result = totalWeight > 0 ? (weightedSum / totalWeight) : harian;
 
       const katrol = overallRecord && overallRecord.katrol !== '' && overallRecord.katrol !== undefined ? Number(overallRecord.katrol) : 0;
       const finalCalculated = Math.round(result) + katrol;
