@@ -443,30 +443,92 @@ const TeacherSettings: React.FC = () => {
   }
   return ContentService.createTextOutput(JSON.stringify({ values: values })).setMimeType(ContentService.MimeType.JSON);
 }
+function saveNilaiRapot(sheet, values) {
+  if (!sheet || !values || values.length === 0) return;
+  var lastRow = sheet.getLastRow();
+  if (lastRow === 0) {
+    if (values.length > 0) sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
+    return;
+  }
+  var isHeader = (values[0] && (String(values[0][0]).toLowerCase() === 'id'));
+  var dataRows = isHeader ? values.slice(1) : values;
+  if (dataRows.length === 0) return;
+
+  var processedRows = [];
+  for (var r = 0; r < dataRows.length; r++) {
+    var row = [];
+    for (var c = 0; c < dataRows[r].length; c++) {
+      var val = dataRows[r][c];
+      if (val === null || val === undefined) {
+        row.push("");
+      } else if (typeof val === 'object') {
+        row.push(JSON.stringify(val));
+      } else if (typeof val === 'string' && /^\\d{4}-\\d{2}-\\d{2}T/.test(val)) {
+        row.push("'" + val);
+      } else {
+        var strVal = String(val);
+        if (strVal.length > 49000) {
+          row.push(strVal.substring(0, 48500) + "... [DIPOTONG]");
+        } else {
+          row.push(val);
+        }
+      }
+    }
+    processedRows.push(row);
+  }
+  if (processedRows.length === 0) return;
+
+  var existingIds = [];
+  if (lastRow > 1) {
+    var idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < idValues.length; i++) {
+      existingIds.push(String(idValues[i][0]).trim());
+    }
+  }
+
+  var rowsToAppend = [];
+  for (var k = 0; k < processedRows.length; k++) {
+    var rowData = processedRows[k];
+    var rowId = (rowData[0] !== null && rowData[0] !== undefined) ? String(rowData[0]).trim() : '';
+    var existingIndex = rowId ? existingIds.indexOf(rowId) : -1;
+    if (existingIndex !== -1) {
+      var targetRowNum = existingIndex + 2;
+      if (rowData.length > sheet.getMaxColumns()) {
+        sheet.insertColumnsAfter(sheet.getMaxColumns(), rowData.length - sheet.getMaxColumns());
+      }
+      sheet.getRange(targetRowNum, 1, 1, rowData.length).setValues([rowData]);
+    } else {
+      rowsToAppend.push(rowData);
+    }
+  }
+  if (rowsToAppend.length > 0) {
+    var currentLastRow = sheet.getLastRow();
+    var maxCols = sheet.getMaxColumns();
+    var colsNeeded = rowsToAppend[0].length;
+    if (colsNeeded > maxCols) {
+      sheet.insertColumnsAfter(maxCols, colsNeeded - maxCols);
+    }
+    sheet.getRange(currentLastRow + 1, 1, rowsToAppend.length, colsNeeded).setValues(rowsToAppend);
+  }
+}
 function doPost(e) {
   var result = { success: false };
   try {
     var postData = JSON.parse(e.postData.contents);
     var sheetName = postData.sheet;
     var values = postData.values;
+    if (sheetName === 'kelola_nilai') sheetName = 'nilai_rapot';
     if (sheetName && values) {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
       var sheet = ss.getSheetByName(sheetName);
       if (!sheet) sheet = ss.insertSheet(sheetName);
-      sheet.clear();
-      if (values.length > 0) {
-        // Proteksi: Batasi panjang karakter per sel agar tidak melebihi limit Google Sheets (50.000 karakter)
-        for (var r = 0; r < values.length; r++) {
-          for (var c = 0; c < values[r].length; c++) {
-            if (values[r][c] !== null && values[r][c] !== undefined) {
-              var strVal = values[r][c].toString();
-              if (strVal.length > 49000) {
-                values[r][c] = strVal.substring(0, 48500) + "... [DIPOTONG KARENA BATAS SHEET]";
-              }
-            }
-          }
+      if (sheetName === 'nilai_rapot' || postData.mode === 'append' || postData.action === 'append') {
+        saveNilaiRapot(sheet, values);
+      } else {
+        sheet.clear();
+        if (values.length > 0) {
+          sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
         }
-        sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
       }
       result.success = true;
     }
@@ -497,30 +559,92 @@ function doPost(e) {
   }
   return ContentService.createTextOutput(JSON.stringify({ values: values })).setMimeType(ContentService.MimeType.JSON);
 }
+function saveNilaiRapot(sheet, values) {
+  if (!sheet || !values || values.length === 0) return;
+  var lastRow = sheet.getLastRow();
+  if (lastRow === 0) {
+    if (values.length > 0) sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
+    return;
+  }
+  var isHeader = (values[0] && (String(values[0][0]).toLowerCase() === 'id'));
+  var dataRows = isHeader ? values.slice(1) : values;
+  if (dataRows.length === 0) return;
+
+  var processedRows = [];
+  for (var r = 0; r < dataRows.length; r++) {
+    var row = [];
+    for (var c = 0; c < dataRows[r].length; c++) {
+      var val = dataRows[r][c];
+      if (val === null || val === undefined) {
+        row.push("");
+      } else if (typeof val === 'object') {
+        row.push(JSON.stringify(val));
+      } else if (typeof val === 'string' && /^\\d{4}-\\d{2}-\\d{2}T/.test(val)) {
+        row.push("'" + val);
+      } else {
+        var strVal = String(val);
+        if (strVal.length > 49000) {
+          row.push(strVal.substring(0, 48500) + "... [DIPOTONG]");
+        } else {
+          row.push(val);
+        }
+      }
+    }
+    processedRows.push(row);
+  }
+  if (processedRows.length === 0) return;
+
+  var existingIds = [];
+  if (lastRow > 1) {
+    var idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < idValues.length; i++) {
+      existingIds.push(String(idValues[i][0]).trim());
+    }
+  }
+
+  var rowsToAppend = [];
+  for (var k = 0; k < processedRows.length; k++) {
+    var rowData = processedRows[k];
+    var rowId = (rowData[0] !== null && rowData[0] !== undefined) ? String(rowData[0]).trim() : '';
+    var existingIndex = rowId ? existingIds.indexOf(rowId) : -1;
+    if (existingIndex !== -1) {
+      var targetRowNum = existingIndex + 2;
+      if (rowData.length > sheet.getMaxColumns()) {
+        sheet.insertColumnsAfter(sheet.getMaxColumns(), rowData.length - sheet.getMaxColumns());
+      }
+      sheet.getRange(targetRowNum, 1, 1, rowData.length).setValues([rowData]);
+    } else {
+      rowsToAppend.push(rowData);
+    }
+  }
+  if (rowsToAppend.length > 0) {
+    var currentLastRow = sheet.getLastRow();
+    var maxCols = sheet.getMaxColumns();
+    var colsNeeded = rowsToAppend[0].length;
+    if (colsNeeded > maxCols) {
+      sheet.insertColumnsAfter(maxCols, colsNeeded - maxCols);
+    }
+    sheet.getRange(currentLastRow + 1, 1, rowsToAppend.length, colsNeeded).setValues(rowsToAppend);
+  }
+}
 function doPost(e) {
   var result = { success: false };
   try {
     var postData = JSON.parse(e.postData.contents);
     var sheetName = postData.sheet;
     var values = postData.values;
+    if (sheetName === 'kelola_nilai') sheetName = 'nilai_rapot';
     if (sheetName && values) {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
       var sheet = ss.getSheetByName(sheetName);
       if (!sheet) sheet = ss.insertSheet(sheetName);
-      sheet.clear();
-      if (values.length > 0) {
-        // Proteksi: Batasi panjang karakter per sel agar tidak melebihi limit Google Sheets (50.000 karakter)
-        for (var r = 0; r < values.length; r++) {
-          for (var c = 0; c < values[r].length; c++) {
-            if (values[r][c] !== null && values[r][c] !== undefined) {
-              var strVal = values[r][c].toString();
-              if (strVal.length > 49000) {
-                values[r][c] = strVal.substring(0, 48500) + "... [DIPOTONG KARENA BATAS SHEET]";
-              }
-            }
-          }
+      if (sheetName === 'nilai_rapot' || postData.mode === 'append' || postData.action === 'append') {
+        saveNilaiRapot(sheet, values);
+      } else {
+        sheet.clear();
+        if (values.length > 0) {
+          sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
         }
-        sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
       }
       result.success = true;
     }

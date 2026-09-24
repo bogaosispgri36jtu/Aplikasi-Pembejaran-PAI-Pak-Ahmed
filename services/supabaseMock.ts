@@ -696,6 +696,7 @@ class DatabaseService {
         }
 
         try {
+          const isAppendMode = tableName === 'nilai_rapot' || tableName === 'kelola_nilai';
           const res = await fetch(appsScriptUrl, {
             method: 'POST',
             headers: {
@@ -704,6 +705,8 @@ class DatabaseService {
             body: JSON.stringify({
               sheet: tableName,
               kelas: targetClass,
+              mode: isAppendMode ? 'append' : 'overwrite',
+              action: isAppendMode ? 'append' : 'write',
               values: values
             })
           });
@@ -792,25 +795,64 @@ class DatabaseService {
         });
       }
 
-      // 4. Bersihkan data lama di range A1:Z5000 terlebih dahulu
-      try {
-        await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000:clear`, {
-          method: 'POST',
-          body: JSON.stringify({})
-        }, token);
-      } catch (clearErr) {
-        console.warn(`Gagal membersihkan range lama di sheet ${tableName}:`, clearErr);
-      }
+      const isNilaiRapotSheet = tableName === 'nilai_rapot' || tableName === 'kelola_nilai';
 
-      // 5. Update data dalam sekali panggil PUT API
-      await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000?valueInputOption=USER_ENTERED`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          range: `${cfg.name}!A1:Z5000`,
-          majorDimension: 'ROWS',
-          values: values
-        })
-      }, token);
+      if (!isNilaiRapotSheet) {
+        // 4. Bersihkan data lama di range A1:Z5000 terlebih dahulu untuk sheet non-ledger
+        try {
+          await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000:clear`, {
+            method: 'POST',
+            body: JSON.stringify({})
+          }, token);
+        } catch (clearErr) {
+          console.warn(`Gagal membersihkan range lama di sheet ${tableName}:`, clearErr);
+        }
+
+        // 5. Update data dalam sekali panggil PUT API
+        await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z5000?valueInputOption=USER_ENTERED`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            range: `${cfg.name}!A1:Z5000`,
+            majorDimension: 'ROWS',
+            values: values
+          })
+        }, token);
+      } else {
+        // KHUSUS NILAI_RAPOT: JANGAN PERNAH CLEAR! Tambahkan data ke baris paling bawah (append)
+        const dataRows = values.slice(1);
+        if (dataRows.length > 0) {
+          // Cek apakah sheet kosong
+          let sheetHasData = false;
+          try {
+            const checkRes = await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:A1`, { method: 'GET' }, token);
+            if (checkRes && checkRes.values && checkRes.values.length > 0) {
+              sheetHasData = true;
+            }
+          } catch (_) {}
+
+          if (!sheetHasData) {
+            // Tulis header terlebih dahulu
+            await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:Z1?valueInputOption=USER_ENTERED`, {
+              method: 'PUT',
+              body: JSON.stringify({
+                range: `${cfg.name}!A1:Z1`,
+                majorDimension: 'ROWS',
+                values: [values[0]]
+              })
+            }, token);
+          }
+
+          // Append baris-baris siswa ke bawah
+          await this.fetchSheetsAPI(spreadsheetId, `/values/${encodeURIComponent(cfg.name)}!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+            method: 'POST',
+            body: JSON.stringify({
+              range: `${cfg.name}!A1`,
+              majorDimension: 'ROWS',
+              values: dataRows
+            })
+          }, token);
+        }
+      }
 
       console.log(`Berhasil menyinkronkan tabel ${tableName} ke Google Sheets.`);
       this.setSyncStatus('success', `Tabel ${tableName} berhasil tersimpan ke Google Sheets.`);

@@ -125,6 +125,104 @@ function writeValuesToSheet(sheet, values) {
 }
 
 /**
+ * Helper Khusus Menyimpan Data ke Sheet 'nilai_rapot' (Ledger):
+ * ATURAN:
+ * 1. JANGAN PERNAH MENGHAPUS / CLEAR data yang sudah masuk di sheet nilai_rapot
+ * 2. Menambahkan data baru (kelas lain / siswa baru) ke baris paling bawah (append)
+ * 3. Jika siswa dengan ID sama persis sudah tercatat di sheet, perbarui baris siswa tersebut secara presisi tanpa merusak data baris siswa atau kelas lain
+ */
+function saveNilaiRapot(sheet, values) {
+  if (!sheet || !values || values.length === 0) return;
+
+  var lastRow = sheet.getLastRow();
+
+  // Jika sheet belum ada data sama sekali (kosong), tuliskan header & seluruh data
+  if (lastRow === 0) {
+    writeValuesToSheet(sheet, values);
+    return;
+  }
+
+  // Tentukan apakah baris pertama adalah baris header
+  var isHeader = (values[0] && (String(values[0][0]).toLowerCase() === 'id'));
+  var dataRows = isHeader ? values.slice(1) : values;
+  if (dataRows.length === 0) return;
+
+  // Format dan bersihkan data baris yang masuk
+  var processedRows = [];
+  for (var r = 0; r < dataRows.length; r++) {
+    var row = [];
+    for (var c = 0; c < dataRows[r].length; c++) {
+      var val = dataRows[r][c];
+
+      if (val === null || val === undefined) {
+        row.push("");
+      } else if (typeof val === 'object') {
+        row.push(JSON.stringify(val));
+      } else if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
+        row.push("'" + val);
+      } else {
+        var strVal = String(val);
+        if (strVal.length > 49000) {
+          row.push(strVal.substring(0, 48500) + "... [DIPOTONG KARENA BATAS SHEET]");
+        } else {
+          row.push(val);
+        }
+      }
+    }
+    processedRows.push(row);
+  }
+
+  if (processedRows.length === 0) return;
+
+  // Baca ID yang sudah ada di sheet (Kolom 1: ID siswa_semester)
+  var existingIds = [];
+  if (lastRow > 1) {
+    var idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < idValues.length; i++) {
+      existingIds.push(String(idValues[i][0]).trim());
+    }
+  }
+
+  var rowsToAppend = [];
+
+  for (var k = 0; k < processedRows.length; k++) {
+    var rowData = processedRows[k];
+    var rowId = (rowData[0] !== null && rowData[0] !== undefined) ? String(rowData[0]).trim() : '';
+
+    var existingIndex = rowId ? existingIds.indexOf(rowId) : -1;
+
+    if (existingIndex !== -1) {
+      // Siswa dengan ID sama sudah ada di baris target: (existingIndex + 2)
+      // Perbarui baris siswa tersebut secara presisi tanpa mengganggu atau menghapus baris lain
+      var targetRowNum = existingIndex + 2;
+      if (rowData.length > sheet.getMaxColumns()) {
+        sheet.insertColumnsAfter(sheet.getMaxColumns(), rowData.length - sheet.getMaxColumns());
+      }
+      sheet.getRange(targetRowNum, 1, 1, rowData.length).setValues([rowData]);
+    } else {
+      // Siswa / kelas baru: kumpulkan untuk ditambahkan ke bawahnya
+      rowsToAppend.push(rowData);
+    }
+  }
+
+  // Tambahkan semua baris baru ke paling bawah (append)
+  if (rowsToAppend.length > 0) {
+    var currentLastRow = sheet.getLastRow();
+    var maxCols = sheet.getMaxColumns();
+    var colsNeeded = rowsToAppend[0].length;
+    if (colsNeeded > maxCols) {
+      sheet.insertColumnsAfter(maxCols, colsNeeded - maxCols);
+    }
+    sheet.getRange(currentLastRow + 1, 1, rowsToAppend.length, colsNeeded).setValues(rowsToAppend);
+  }
+
+  // Rapikan lebar kolom
+  try {
+    sheet.autoResizeColumns(1, Math.min(sheet.getLastColumn(), 25));
+  } catch (e) {}
+}
+
+/**
  * Fungsi Manual Inisialisasi Seluruh Sheet Beserta Header Kolom Resmi
  */
 function setupDatabaseSchema() {
@@ -251,7 +349,12 @@ function doPost(e) {
       }
 
       // Tulis baris nilai ke spreadsheet
-      writeValuesToSheet(sheet, values);
+      // Khusus sheet 'nilai_rapot': tambahkan ke bawahnya (append) tanpa menghapus data yang sudah ada di awal
+      if (sheetName === 'nilai_rapot' || postData.mode === 'append' || postData.action === 'append') {
+        saveNilaiRapot(sheet, values);
+      } else {
+        writeValuesToSheet(sheet, values);
+      }
 
       result.success = true;
       result.rowsWritten = values.length;
