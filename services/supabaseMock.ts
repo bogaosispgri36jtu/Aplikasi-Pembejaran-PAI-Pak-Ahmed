@@ -23,8 +23,7 @@ const TABS_CONFIG: SheetConfig[] = [
   { name: 'ujian', headers: ['id', 'title', 'grade', 'category', 'semester', 'duration', 'deadline', 'is_random', 'status', 'created_at', 'tp_id', 'assessment_id'] },
   { name: 'bank_soal', headers: ['id', 'exam_id', 'type', 'text', 'image_url', 'options', 'correct_answer'] },
   { name: 'hasil_ujian', headers: ['id', 'exam_id', 'student_nis', 'student_name', 'student_class', 'semester', 'answers', 'score', 'violation_count', 'started_at', 'submitted_at'] },
-  { name: 'nilai_rapot', headers: ['id', 'student_id', 'nama_siswa', 'nis', 'kelas', 'semester', 'sts', 'sas', 'sakit', 'izin', 'alpha', 'sikap', 'katrol', 'nilai_akhir', 'updated_at'] },
-  { name: 'kelola_nilai', headers: ['id', 'student_id', 'nama_siswa', 'nis', 'kelas', 'semester', 'sts', 'sas', 'sakit', 'izin', 'alpha', 'sikap', 'katrol', 'nilai_akhir', 'updated_at'] },
+  { name: 'nilai_rapot', headers: ['id', 'student_id', 'nama_siswa', 'nis', 'kelas', 'semester', 'nilai_TP1', 'nilai_TP2', 'nilai_TP3', 'nilai_TP4', 'rata2_nilaiharian', 'sts', 'sas', 'sakit', 'izin', 'alpha', 'sikap', 'rata2_nilaikeseluruhan', 'katrol', 'nilai_akhir', 'updated_at'] },
   { name: 'tujuan_pembelajaran', headers: ['id', 'code', 'name', 'description', 'subject', 'grade', 'semester'] },
   { name: 'asesmen_tp', headers: ['id', 'tpId', 'name', 'type'] },
   { name: 'kunjungan', headers: ['id', 'nis', 'nama', 'kelas', 'halaman', 'timestamp', 'device', 'browser', 'duration'] },
@@ -56,8 +55,20 @@ export function formatDateOnly(val: any): string {
   return str;
 }
 
+export const DEFAULT_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzD13Ew8LAodfPljzyU89hyDAYWVydrG84_Wi0qjkMiVYyAB1vUgdjZYu72HTgMJN__/exec';
+
 class DatabaseService {
   private isSyncingFromSheets = false;
+
+  constructor() {
+    try {
+      const existing = localStorage.getItem('google_apps_script_url');
+      if (!existing || !existing.trim().startsWith('https://script.google.com/')) {
+        localStorage.setItem('google_apps_script_url', DEFAULT_APPS_SCRIPT_URL);
+      }
+    } catch (_) {}
+  }
+
   // HELPER LOKAL DATASTORAGE (LOCALSTORAGE)
   public getLocalTable<T>(name: string): T[] {
     let key = `pai_db_${name}`;
@@ -149,7 +160,6 @@ class DatabaseService {
     localStorage.setItem(key, JSON.stringify(processedData));
     if (name === 'nilai_rapot' || name === 'kelola_nilai') {
       localStorage.setItem('pai_db_nilai_rapot', JSON.stringify(processedData));
-      localStorage.setItem('pai_db_kelola_nilai', JSON.stringify(processedData));
     } else if (name === 'admin_users' || name === 'admin user') {
       localStorage.setItem('pai_db_admin_users', JSON.stringify(processedData));
       localStorage.setItem('pai_db_admin user', JSON.stringify(processedData));
@@ -157,15 +167,16 @@ class DatabaseService {
     
     // Otomatis sinkronkan data yang diinput/diperbarui oleh guru/siswa ke Google Sheets
     if (!this.isSyncingFromSheets) {
+      // Nilai rapot / ledger hanya disinkronkan secara eksplisit saat tombol SIMPAN diklik dengan filter kelas yang dipilih
+      if (name === 'nilai_rapot' || name === 'kelola_nilai') {
+        return;
+      }
       setTimeout(() => {
-        this.syncTableToGoogleSheets(name).catch(err => {
-          console.warn(`Latar belakang sinkronisasi tabel ${name} ke Google Sheets terhenti:`, err);
+        const targetTable = name;
+        this.syncTableToGoogleSheets(targetTable).catch(err => {
+          console.warn(`Latar belakang sinkronisasi tabel ${targetTable} ke Google Sheets terhenti:`, err);
         });
-        if (name === 'nilai_rapot') {
-          this.syncTableToGoogleSheets('kelola_nilai').catch(() => {});
-        } else if (name === 'kelola_nilai') {
-          this.syncTableToGoogleSheets('nilai_rapot').catch(() => {});
-        } else if (name === 'admin_users') {
+        if (name === 'admin_users') {
           this.syncTableToGoogleSheets('admin user').catch(() => {});
         }
       }, 50);
@@ -241,6 +252,26 @@ class DatabaseService {
     }
     if (['tpid', 'tp_id', 'kodetp', 'code_tp'].includes(cleanParsed)) {
       if (expectedHeaders.includes('tpId')) return 'tpId';
+    }
+
+    // Ledger STS & SAS & TP & Average Mappings
+    if (cleanParsed.startsWith('nilaitp') || cleanParsed.startsWith('tp')) {
+      return parsedStr;
+    }
+    if (['rata2nilaiharian', 'ratanilaiharian', 'nilairata2harian', 'rata2harian', 'rata_harian'].includes(cleanParsed)) {
+      return 'rata2_nilaiharian';
+    }
+    if (['rata2nilaikeseluruhan', 'ratanilaikeseluruhan', 'nilairata2keseluruhan', 'ratakeseluruhan', 'rata_keseluruhan'].includes(cleanParsed)) {
+      return 'rata2_nilaikeseluruhan';
+    }
+    if (['sts', 'nilaists', 'uts', 'nilaiuts', 'asesmentengahsemester', 'sumatiftengahsemester', 'midsemester', 'pts'].includes(cleanParsed)) {
+      if (expectedHeaders.includes('sts')) return 'sts';
+    }
+    if (['sas', 'nilaisas', 'uas', 'nilaiuas', 'asesmenakhirsemester', 'sumatifakhirsemester', 'akhirsemester', 'pas'].includes(cleanParsed)) {
+      if (expectedHeaders.includes('sas')) return 'sas';
+    }
+    if (['nilaiakhir', 'na', 'nilai_akhir', 'nilairapot', 'raport', 'rapot'].includes(cleanParsed)) {
+      if (expectedHeaders.includes('nilai_akhir')) return 'nilai_akhir';
     }
 
     return parsedStr.toLowerCase();
@@ -337,14 +368,18 @@ class DatabaseService {
   }
 
   async getAppsScriptUrl(): Promise<string | null> {
-    return 'https://script.google.com/macros/s/AKfycbzD13Ew8LAodfPljzyU89hyDAYWVydrG84_Wi0qjkMiVYyAB1vUgdjZYu72HTgMJN__/exec';
+    const custom = localStorage.getItem('google_apps_script_url');
+    if (custom && custom.trim().startsWith('https://script.google.com/')) {
+      return custom.trim();
+    }
+    return DEFAULT_APPS_SCRIPT_URL;
   }
 
   async setAppsScriptUrl(url: string | null): Promise<void> {
-    if (url) {
-      localStorage.setItem('google_apps_script_url', url);
+    if (url && url.trim().length > 0) {
+      localStorage.setItem('google_apps_script_url', url.trim());
     } else {
-      localStorage.removeItem('google_apps_script_url');
+      localStorage.setItem('google_apps_script_url', DEFAULT_APPS_SCRIPT_URL);
     }
   }
 
@@ -510,6 +545,10 @@ class DatabaseService {
 
         for (const chunk of chunkedTabs) {
           await Promise.all(chunk.map(async (cfg) => {
+            if (cfg.name === 'nilai_rapot' || cfg.name === 'kelola_nilai') {
+              // Sheet nilai_rapot disimpan secara eksklusif berdasarkan kelas yang dipilih guru pada menu ledger
+              return;
+            }
             const items = this.getLocalTable(cfg.name);
             const values: any[][] = [cfg.headers];
             
@@ -611,36 +650,50 @@ class DatabaseService {
   }
 
   // Sinkronisasi khusus SATU tabel lokal -> Google Sheets (Hemat kuota API & Sangat Cepat!)
-  async syncTableToGoogleSheets(tableName: string, accessToken?: string): Promise<void> {
+  async syncTableToGoogleSheets(tableName: string, accessToken?: string, customValues?: any[][], targetClass?: string): Promise<void> {
     this.setSyncStatus('syncing', `Menyinkronkan tabel ${tableName}...`);
     try {
       const appsScriptUrl = await this.getAppsScriptUrl();
       if (appsScriptUrl) {
         const cfg = TABS_CONFIG.find(c => c.name === tableName);
-        if (!cfg) return;
+        if (!cfg && !customValues) return;
 
-        const items = this.getLocalTable(cfg.name);
-        const values: any[][] = [cfg.headers];
-        
-        const students = cfg.name === 'Nilai' ? this.getLocalTable<any>('data_siswa') : [];
+        let values: any[][];
+        if (customValues && customValues.length > 0) {
+          values = customValues;
+        } else {
+          const defaultHeaders = cfg ? cfg.headers : [];
+          const items = this.getLocalTable(tableName);
+          values = [defaultHeaders];
+          
+          const students = tableName === 'Nilai' ? this.getLocalTable<any>('data_siswa') : [];
 
-        items.forEach((item: any) => {
-          if (cfg.name === 'Nilai' && (!item.name_student || item.name_student === '')) {
-            const student = students.find((s: any) => s.id === item.student_id);
-            if (student) {
-              item.name_student = student.namalengkap;
+          items.forEach((item: any) => {
+            if (tableName === 'Nilai' && (!item.name_student || item.name_student === '')) {
+              const student = students.find((s: any) => s.id === item.student_id);
+              if (student) {
+                item.name_student = student.namalengkap;
+              }
             }
-          }
 
-          const row = cfg.headers.map(header => {
-            const val = item[header];
-            if (val === undefined || val === null) return '';
-            if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
-            if (typeof val === 'object') return JSON.stringify(val);
-            return val;
+            if ((tableName === 'nilai_rapot' || tableName === 'kelola_nilai') && (!item.nama_siswa || item.nama_siswa === '-')) {
+              const allStudents = this.getLocalTable<any>('data_siswa');
+              const student = allStudents.find((s: any) => s.id === item.student_id || s.nis === item.nis);
+              if (student && student.namalengkap) {
+                item.nama_siswa = student.namalengkap;
+              }
+            }
+
+            const row = defaultHeaders.map(header => {
+              const val = item[header];
+              if (val === undefined || val === null) return '';
+              if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
+              if (typeof val === 'object') return JSON.stringify(val);
+              return val;
+            });
+            values.push(row);
           });
-          values.push(row);
-        });
+        }
 
         try {
           const res = await fetch(appsScriptUrl, {
@@ -650,6 +703,7 @@ class DatabaseService {
             },
             body: JSON.stringify({
               sheet: tableName,
+              kelas: targetClass,
               values: values
             })
           });
@@ -702,28 +756,41 @@ class DatabaseService {
       }
 
       // 3. Ambil data lokal dan masukkan ke values (termasuk headers sebagai baris pertama)
-      const items = this.getLocalTable(cfg.name);
-      const values: any[][] = [cfg.headers];
-      
-      const students = cfg.name === 'Nilai' ? this.getLocalTable<any>('data_siswa') : [];
+      let values: any[][];
+      if (customValues && customValues.length > 0) {
+        values = customValues;
+      } else {
+        const items = this.getLocalTable(cfg.name);
+        values = [cfg.headers];
+        
+        const students = cfg.name === 'Nilai' ? this.getLocalTable<any>('data_siswa') : [];
 
-      items.forEach((item: any) => {
-        if (cfg.name === 'Nilai' && (!item.name_student || item.name_student === '')) {
-          const student = students.find((s: any) => s.id === item.student_id);
-          if (student) {
-            item.name_student = student.namalengkap;
+        items.forEach((item: any) => {
+          if (cfg.name === 'Nilai' && (!item.name_student || item.name_student === '')) {
+            const student = students.find((s: any) => s.id === item.student_id);
+            if (student) {
+              item.name_student = student.namalengkap;
+            }
           }
-        }
 
-        const row = cfg.headers.map(header => {
-          const val = item[header];
-          if (val === undefined || val === null) return '';
-          if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
-          if (typeof val === 'object') return JSON.stringify(val);
-          return val;
+          if ((cfg.name === 'nilai_rapot' || cfg.name === 'kelola_nilai') && (!item.nama_siswa || item.nama_siswa === '-')) {
+            const allStudents = this.getLocalTable<any>('data_siswa');
+            const student = allStudents.find((s: any) => s.id === item.student_id || s.nis === item.nis);
+            if (student && student.namalengkap) {
+              item.nama_siswa = student.namalengkap;
+            }
+          }
+
+          const row = cfg.headers.map(header => {
+            const val = item[header];
+            if (val === undefined || val === null) return '';
+            if (header === 'date' || header === 'tanggal') return formatDateOnly(val);
+            if (typeof val === 'object') return JSON.stringify(val);
+            return val;
+          });
+          values.push(row);
         });
-        values.push(row);
-      });
+      }
 
       // 4. Bersihkan data lama di range A1:Z5000 terlebih dahulu
       try {
@@ -1805,7 +1872,7 @@ class DatabaseService {
     return this.getLocalTable<any>('nilai_rapot');
   }
 
-  async saveKelolaNilai(records: any[]): Promise<void> {
+  async saveKelolaNilai(records: any[], targetClass?: string, customValues?: any[][]): Promise<void> {
     const list = this.getLocalTable<any>('nilai_rapot');
     
     for (const record of records) {
@@ -1817,7 +1884,11 @@ class DatabaseService {
       }
     }
     
+    // Simpan ke local storage untuk nilai_rapot
     this.setLocalTable('nilai_rapot', list);
+
+    // Sinkronkan langsung ke Google Sheets pada sheet 'nilai_rapot' khusus kelas yang dipilih
+    await this.syncTableToGoogleSheets('nilai_rapot', undefined, customValues, targetClass);
   }
 
   // --- RESET FUNCTIONS ---

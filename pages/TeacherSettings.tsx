@@ -211,23 +211,35 @@ const TeacherSettings: React.FC = () => {
     Swal.fire({ icon: 'success', title: 'Tersimpan!', text: 'URL Google Apps Script berhasil ditautkan dan disimpan!', timer: 1500, showConfirmButton: false, heightAuto: false });
   };
 
+  const handleResetAppsScriptUrl = async () => {
+    const defaultUrl = 'https://script.google.com/macros/s/AKfycbzD13Ew8LAodfPljzyU89hyDAYWVydrG84_Wi0qjkMiVYyAB1vUgdjZYu72HTgMJN__/exec';
+    await db.setAppsScriptUrl(defaultUrl);
+    setAppsScriptUrl(defaultUrl);
+    Swal.fire({ 
+      icon: 'success', 
+      title: 'Reset ke URL Resmi', 
+      text: 'URL Web Apps Script telah dikembalikan ke URL resmi bawaan aplikasi.', 
+      timer: 1500, 
+      showConfirmButton: false, 
+      heightAuto: false 
+    });
+  };
+
   const handleDeleteAppsScriptUrl = async () => {
     const confirmed = await Swal.fire({
-      title: 'Putuskan Hubungan?',
-      text: 'Data rekap lokal Anda akan tetap ada, tetapi sinkronisasi otomatis ke Google Sheets akan dihentikan.',
-      icon: 'warning',
+      title: 'Kembalikan ke URL Bawaan?',
+      text: 'URL akan dikembalikan ke Google Apps Script resmi bawaan aplikasi portal ini.',
+      icon: 'question',
       showCancelButton: true,
-      confirmButtonColor: '#dc2626',
+      confirmButtonColor: '#059669',
       cancelButtonColor: '#475569',
-      confirmButtonText: 'Ya, Putuskan!',
+      confirmButtonText: 'Ya, Kembalikan!',
       cancelButtonText: 'Batal',
       heightAuto: false
     });
     if (!confirmed.isConfirmed) return;
 
-    await db.setAppsScriptUrl(null);
-    setAppsScriptUrl('');
-    Swal.fire({ icon: 'success', title: 'Terputus', text: 'Koneksi dengan Google Apps Script telah dinonaktifkan.', timer: 1500, showConfirmButton: false, heightAuto: false });
+    await handleResetAppsScriptUrl();
   };
 
   return (
@@ -349,29 +361,23 @@ const TeacherSettings: React.FC = () => {
                 <div className="p-5 rounded-2xl border border-slate-100 bg-slate-50/50 flex flex-col justify-between space-y-4">
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Langkah 1: Tempel Url Web App</span>
-                      {appsScriptUrl ? (
-                        <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Terhubung
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-100">
-                          Belum Diisi
-                        </span>
-                      )}
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">URL Web App Google Apps Script</span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Terhubung Permanen
+                      </span>
                     </div>
 
                     <p className="text-[10px] md:text-xs text-slate-500 leading-relaxed">
-                      Tempel URL Web Aplikasi Google Apps Script dari spreadsheet milik Anda di bawah ini untuk mengaktifkan sinkronisasi otomatis.
+                      URL Web Aplikasi Google Apps Script telah <b>ditetapkan langsung secara permanen</b> pada sistem aplikasi. Anda tidak perlu lagi menyalin atau menempelkan URL saat membuka dari perangkat (device) baru.
                     </p>
 
                     <div className="space-y-2">
-                      <label className="text-[9px] font-extrabold text-slate-600 uppercase tracking-wider block">Web App URL Google Apps Script</label>
+                      <label className="text-[9px] font-extrabold text-slate-600 uppercase tracking-wider block">Web App URL Google Apps Script (Resmi)</label>
                       <input
                         type="text"
                         value={appsScriptUrl}
                         onChange={(e) => setAppsScriptUrl(e.target.value)}
-                        placeholder="https://script.google.com/macros/s/xxxx/exec"
+                        placeholder="https://script.google.com/macros/s/AKfycbzD13Ew8LAodfPljzyU89hyDAYWVydrG84_Wi0qjkMiVYyAB1vUgdjZYu72HTgMJN__/exec"
                         className="w-full px-3 py-2.5 text-[10px] font-mono border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 bg-white"
                       />
                     </div>
@@ -384,14 +390,13 @@ const TeacherSettings: React.FC = () => {
                     >
                       Simpan &amp; Tautkan URL
                     </button>
-                    {appsScriptUrl && (
-                      <button
-                        onClick={handleDeleteAppsScriptUrl}
-                        className="px-4 py-3 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-[10px] font-black uppercase tracking-wider transition-all"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    )}
+                    <button
+                      onClick={handleResetAppsScriptUrl}
+                      className="px-4 py-3 rounded-xl border border-emerald-200 bg-white hover:bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase tracking-wider transition-all"
+                      title="Kembalikan ke URL Resmi Bawaan"
+                    >
+                      Reset ke URL Resmi
+                    </button>
                   </div>
                 </div>
 

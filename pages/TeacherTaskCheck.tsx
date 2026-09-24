@@ -5,6 +5,9 @@ import { db } from '../services/supabaseMock';
 import { TaskSubmission, GradeLevel } from '../types';
 import Swal from 'sweetalert2';
 import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { getTeacherSignatureDataUrl, formatGoogleDriveImageUrl } from '../utils/signatureData';
 import { verifySecurityToken } from '../utils/security';
 import { firestore } from '../services/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
@@ -38,6 +41,31 @@ const TeacherTaskCheck: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   
   const [availableClasses, setAvailableClasses] = useState<string[]>([]);
+
+  // --- STATE KARTU "DATA LAPORAN TUGAS ONLINE" ---
+  const [allStudentsList, setAllStudentsList] = useState<any[]>([]);
+  const [reportClassFilter, setReportClassFilter] = useState<string>('all');
+  const [reportStatusFilter, setReportStatusFilter] = useState<'all' | 'sudah' | 'belum'>('all');
+  const [reportSearchQuery, setReportSearchQuery] = useState<string>('');
+
+  // Sinkronisasi data siswa lokal untuk laporan tugas online
+  useEffect(() => {
+    const students = db.getLocalTable<any>('data_siswa') || [];
+    setAllStudentsList(students);
+  }, [activeTab]);
+
+  // Sinkronisasi filter kelas jika filter utama berubah
+  useEffect(() => {
+    if (filterClass !== 'all') {
+      setReportClassFilter(filterClass);
+    }
+  }, [filterClass]);
+
+  // Daftar kelas unik untuk filter laporan tugas online
+  const availableReportClasses = React.useMemo(() => {
+    const classes = Array.from(new Set(allStudentsList.map((s: any) => s.kelas).filter(Boolean)));
+    return classes.sort((a: any, b: any) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+  }, [allStudentsList]);
 
   // --- STATE SELECTION UNTUK BATCH DELETE ---
   const [selectedTasks, setSelectedTasks] = useState<string[]>([]);
@@ -862,6 +890,435 @@ const TeacherTaskCheck: React.FC = () => {
     });
   };
 
+  // --- LOGIKA DATA UNTUK KARTU "DATA LAPORAN TUGAS ONLINE" ---
+  // Pencocokan otomatis siswa data_siswa dengan sheet hasil_ujian berdasarkan Nama dan NIS
+  const { onlineReportData, onlineReportStats } = React.useMemo(() => {
+    if (!allStudentsList || allStudentsList.length === 0) {
+      return { onlineReportData: [], onlineReportStats: { total: 0, sudah: 0, belum: 0, percentage: 0 } };
+    }
+    const allResults = db.getLocalTable<any>('hasil_ujian') || [];
+
+    // Filter per kelas yang dipilih
+    let classFilteredStudents = allStudentsList;
+    if (reportClassFilter !== 'all') {
+      classFilteredStudents = classFilteredStudents.filter(
+        (s: any) => String(s.kelas || '').trim().toLowerCase() === reportClassFilter.trim().toLowerCase()
+      );
+    }
+
+    // Urutkan alfabetis Nama Siswa (A-Z)
+    classFilteredStudents = [...classFilteredStudents].sort((a: any, b: any) =>
+      (a.namalengkap || '').localeCompare(b.namalengkap || '')
+    );
+
+    let totalSudahInClass = 0;
+
+    const mapped = classFilteredStudents.map((student: any) => {
+      const sNis = String(student.nis || '').trim().toLowerCase();
+      const sName = String(student.namalengkap || '').trim().toLowerCase();
+      const sClass = String(student.kelas || '').trim().toLowerCase();
+
+      // Logika pencocokan pada sheet hasil_ujian berdasarkan Nama dan NIS
+      const matchedResults = allResults.filter((r: any) => {
+        const rNis = String(r.student_nis || '').trim().toLowerCase();
+        const rName = String(r.student_name || '').trim().toLowerCase();
+        const rClass = String(r.student_class || '').trim().toLowerCase();
+
+        const nisMatch = Boolean(sNis && rNis && sNis === rNis);
+        const nameMatch = Boolean(sName && rName && (sName === rName || rName.includes(sName) || sName.includes(rName)));
+
+        if (nisMatch) return true;
+        if (nameMatch) {
+          if (!rClass || !sClass || rClass === sClass) return true;
+        }
+        return false;
+      });
+
+      const isSudah = matchedResults.length > 0;
+      if (isSudah) totalSudahInClass++;
+
+      const completedTasksTitles = matchedResults.map((r: any) => r.ujian?.title || r.title || 'Tugas Online').filter(Boolean);
+
+      return {
+        id: student.id || student.nis,
+        nis: student.nis || '-',
+        nama_siswa: student.namalengkap || '-',
+        kelas: student.kelas || '-',
+        isSudah,
+        completedCount: matchedResults.length,
+        completedTasksTitles
+      };
+    });
+
+    const totalStudentsInClass = classFilteredStudents.length;
+    const totalBelumInClass = totalStudentsInClass - totalSudahInClass;
+    const percentage = totalStudentsInClass > 0 ? Math.round((totalSudahInClass / totalStudentsInClass) * 100) : 0;
+
+    // Filter tambahan untuk tampilan tabel (Status & Cari Siswa)
+    const filteredRows = mapped.filter((item: any) => {
+      if (reportStatusFilter === 'sudah' && !item.isSudah) return false;
+      if (reportStatusFilter === 'belum' && item.isSudah) return false;
+      if (reportSearchQuery.trim()) {
+        const q = reportSearchQuery.trim().toLowerCase();
+        const matchName = item.nama_siswa.toLowerCase().includes(q);
+        const matchNis = item.nis.toLowerCase().includes(q);
+        const matchClass = item.kelas.toLowerCase().includes(q);
+        if (!matchName && !matchNis && !matchClass) return false;
+      }
+      return true;
+    });
+
+    return {
+      onlineReportData: filteredRows,
+      onlineReportStats: {
+        total: totalStudentsInClass,
+        sudah: totalSudahInClass,
+        belum: totalBelumInClass,
+        percentage
+      }
+    };
+  }, [allStudentsList, reportClassFilter, reportStatusFilter, reportSearchQuery, examResults]);
+
+  // Atur / ubah link gambar TTD (Mendukung link Google Drive atau Upload file gambar langsung)
+  const handleConfigureSignatureLink = async () => {
+    const currentUrl = localStorage.getItem('teacher_signature_url') || '';
+    const isDataUrl = currentUrl.startsWith('data:image/');
+    
+    await Swal.fire({
+      title: 'Pengaturan Gambar TTD Guru',
+      html: `
+        <div class="text-left space-y-3.5 text-xs text-slate-700">
+          <p class="text-slate-600 leading-relaxed">
+            Tempel link gambar tanda tangan dari <b>Google Drive</b> atau upload file gambar langsung (PNG / JPG).
+          </p>
+
+          <div class="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3">
+            <label class="block font-bold text-emerald-900 mb-1">
+              Pilihan 1: Upload File Gambar TTD (Direkomendasikan)
+            </label>
+            <input 
+              id="swal-sig-file" 
+              type="file" 
+              accept="image/png, image/jpeg, image/jpg, image/webp" 
+              class="w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
+            />
+          </div>
+
+          <div class="relative flex py-0.5 items-center">
+            <div class="flex-grow border-t border-slate-200"></div>
+            <span class="flex-shrink mx-2 text-slate-400 text-[10px] font-black uppercase">ATAU</span>
+            <div class="flex-grow border-t border-slate-200"></div>
+          </div>
+
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <label class="block font-bold text-slate-800 mb-1">
+              Pilihan 2: Tempel Link Gambar Google Drive
+            </label>
+            <input 
+              id="swal-sig-url" 
+              type="text" 
+              class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:border-emerald-500 font-mono text-slate-800 bg-white" 
+              placeholder="https://drive.google.com/file/d/.../view" 
+              value="${isDataUrl ? '' : currentUrl}" 
+            />
+            <p class="text-[10px] text-slate-500 mt-1">
+              *Jika menggunakan link Google Drive, pastikan izin file diset ke <b>"Siapa saja yang memiliki link (Anyone with the link)"</b>. Sistem akan otomatis mengonversi ke link gambar langsung.
+            </p>
+          </div>
+
+          <div id="swal-sig-preview-box" class="p-2.5 bg-slate-100/70 rounded-xl border border-slate-200 text-center ${currentUrl ? '' : 'hidden'}">
+            <span class="text-[10px] font-bold text-slate-500 block mb-1">Preview Tanda Tangan:</span>
+            <img id="swal-sig-preview-img" src="${currentUrl}" class="max-h-16 mx-auto object-contain bg-white p-1 rounded-lg border border-slate-200 shadow-2xs" alt="Preview TTD" />
+          </div>
+        </div>
+      `,
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: 'Simpan TTD',
+      denyButtonText: 'Gunakan TTD Bawaan',
+      cancelButtonText: 'Batal',
+      confirmButtonColor: '#059669',
+      denyButtonColor: '#64748b',
+      heightAuto: false,
+      didOpen: () => {
+        const fileInput = document.getElementById('swal-sig-file') as HTMLInputElement;
+        const urlInput = document.getElementById('swal-sig-url') as HTMLInputElement;
+        const previewBox = document.getElementById('swal-sig-preview-box');
+        const previewImg = document.getElementById('swal-sig-preview-img') as HTMLImageElement;
+
+        if (fileInput) {
+          fileInput.addEventListener('change', () => {
+            const file = fileInput.files?.[0];
+            if (file) {
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                const res = e.target?.result as string;
+                if (previewImg && previewBox) {
+                  previewImg.src = res;
+                  previewBox.classList.remove('hidden');
+                }
+              };
+              reader.readAsDataURL(file);
+            }
+          });
+        }
+
+        if (urlInput) {
+          urlInput.addEventListener('input', () => {
+            const val = urlInput.value.trim();
+            if (val) {
+              const direct = formatGoogleDriveImageUrl(val);
+              if (previewImg && previewBox) {
+                previewImg.src = direct;
+                previewBox.classList.remove('hidden');
+              }
+            }
+          });
+        }
+      },
+      preConfirm: async () => {
+        const fileInput = document.getElementById('swal-sig-file') as HTMLInputElement;
+        const urlInput = document.getElementById('swal-sig-url') as HTMLInputElement;
+
+        if (fileInput?.files && fileInput.files[0]) {
+          return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              resolve({ value: e.target?.result as string });
+            };
+            reader.readAsDataURL(fileInput.files[0]);
+          });
+        }
+
+        const urlVal = urlInput?.value?.trim();
+        if (urlVal) {
+          const direct = formatGoogleDriveImageUrl(urlVal);
+          return { value: direct };
+        }
+
+        return null;
+      }
+    }).then((result) => {
+      if (result.isConfirmed) {
+        if (result.value && (result.value as any).value) {
+          localStorage.setItem('teacher_signature_url', (result.value as any).value);
+          Swal.fire({
+            icon: 'success',
+            title: 'Gambar TTD Tersimpan!',
+            text: 'Tanda tangan Anda kini aktif dan akan otomatis muncul pada laporan PDF.',
+            timer: 2000,
+            showConfirmButton: false,
+            heightAuto: false
+          });
+        }
+      } else if (result.isDenied) {
+        localStorage.removeItem('teacher_signature_url');
+        Swal.fire({
+          icon: 'info',
+          title: 'TTD Resmi Aktif',
+          text: 'Tanda tangan resmi otomatis Ahmad Nawasyi, S.Pd kembali digunakan.',
+          timer: 2000,
+          showConfirmButton: false,
+          heightAuto: false
+        });
+      }
+    });
+  };
+
+  // Export Laporan PDF (Dirancang profesional, padat & pas 1 kelas dalam 1 lembar)
+  const handleExportReportPDF = async () => {
+    try {
+      if (onlineReportData.length === 0) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Data Laporan Kosong',
+          text: 'Tidak ada data siswa untuk diekspor ke PDF.',
+          confirmButtonColor: '#059669',
+          heightAuto: false
+        });
+        return;
+      }
+
+      const doc = new jsPDF({ orientation: 'portrait' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+
+      // Header Judul PDF Kompak & Rapi
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text('DATA LAPORAN TUGAS ONLINE', pageWidth / 2, 12, { align: 'center' });
+
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(71, 85, 105);
+      doc.text('PENDIDIKAN AGAMA ISLAM DAN BUDI PEKERTI', pageWidth / 2, 16.5, { align: 'center' });
+
+      // Garis pemisah tipis elegan
+      doc.setLineWidth(0.2);
+      doc.setDrawColor(203, 213, 225);
+      doc.line(12, 23.5, pageWidth - 12, 23.5);
+
+      const currentDate = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+      doc.setFontSize(6.8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Tanggal Cetak: ${currentDate}`, 12, 27);
+      doc.text(`Total: ${onlineReportStats.total} Siswa | Sudah: ${onlineReportStats.sudah} | Belum: ${onlineReportStats.belum} (${onlineReportStats.percentage}%)`, pageWidth - 12, 27, { align: 'right' });
+
+      // Urutan header resmi: NO | NIS | NAMA | KELAS | RINCIAN TUGAS ONLINE | STATUS
+      const head = [['NO', 'NIS', 'NAMA', 'KELAS', 'RINCIAN TUGAS ONLINE', 'STATUS']];
+      
+      const body = onlineReportData.map((item, idx) => [
+        idx + 1,
+        item.nis || '-',
+        item.nama_siswa,
+        item.kelas || '-',
+        'Tugas Online',
+        item.isSudah ? 'SUDAH MENGERJAKAN' : 'BELUM MENGERJAKAN'
+      ]);
+
+      const totalRows = onlineReportData.length;
+
+      // Hitung skala baris & padding dinamis agar tidak terlalu rapet (sesak), tidak acak-acakan,
+      // proporsional seperti dokumen resmi sekolah, dan PASTI muat dalam 1 halaman utuh
+      let bodyFontSize = 7.6;
+      let headFontSize = 8.0;
+      let cellPadV = 1.75;
+      let minRowHeight = 5.4;
+
+      if (totalRows > 37) {
+        bodyFontSize = 6.8;
+        headFontSize = 7.2;
+        cellPadV = 0.95;
+        minRowHeight = 4.2;
+      } else if (totalRows > 31) {
+        bodyFontSize = 7.2;
+        headFontSize = 7.5;
+        cellPadV = 1.3;
+        minRowHeight = 4.8;
+      } else if (totalRows > 24) {
+        // Rentang kelas standar (seperti Kelas 8.B = 29 siswa di screenshot)
+        bodyFontSize = 7.6;
+        headFontSize = 8.0;
+        cellPadV = 1.7;
+        minRowHeight = 5.3;
+      } else {
+        // Kelas dengan siswa lebih sedikit (< 25)
+        bodyFontSize = 8.0;
+        headFontSize = 8.5;
+        cellPadV = 2.2;
+        minRowHeight = 6.0;
+      }
+
+      // Tabel dipadatkan secara proporsional agar 1 kelas pas dalam 1 lembar
+      autoTable(doc, {
+        head: head,
+        body: body,
+        startY: 29.5,
+        margin: { left: 12, right: 12, top: 10, bottom: 8 },
+        theme: 'grid',
+        styles: {
+          cellPadding: { top: cellPadV, bottom: cellPadV, left: 1.8, right: 1.8 },
+          fontSize: bodyFontSize,
+          minCellHeight: minRowHeight,
+          valign: 'middle',
+          lineColor: [226, 232, 240],
+          lineWidth: 0.15
+        },
+        headStyles: {
+          fillColor: [5, 150, 105],
+          textColor: [255, 255, 255],
+          fontSize: headFontSize,
+          fontStyle: 'bold',
+          halign: 'center',
+          valign: 'middle',
+          cellPadding: { top: cellPadV + 0.6, bottom: cellPadV + 0.6, left: 1.8, right: 1.8 }
+        },
+        bodyStyles: {
+          fontSize: bodyFontSize,
+          textColor: [30, 41, 59]
+        },
+        alternateRowStyles: {
+          fillColor: [248, 250, 252]
+        },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 10 },  // NO
+          1: { halign: 'center', cellWidth: 24 },  // NIS
+          2: { halign: 'left', cellWidth: 64 },    // NAMA
+          3: { halign: 'center', cellWidth: 16 },  // KELAS
+          4: { halign: 'center', cellWidth: 36 },  // RINCIAN TUGAS ONLINE
+          5: { halign: 'center', cellWidth: 36 }   // STATUS
+        },
+        didParseCell: function (data: any) {
+          if (data.section === 'body' && data.column.index === 5) {
+            if (data.cell.raw === 'SUDAH MENGERJAKAN') {
+              data.cell.styles.textColor = [5, 150, 105];
+              data.cell.styles.fontStyle = 'bold';
+            } else {
+              data.cell.styles.textColor = [220, 38, 38];
+              data.cell.styles.fontStyle = 'bold';
+            }
+          }
+        }
+      });
+
+      // Kolom Tanda Tangan (TTD) diletakkan langsung di bawah tabel secara proporsional
+      let finalY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 5.5 : 45;
+      
+      // Jika halaman pertama tersisa sangat sedikit (< 28mm), baru buat halaman berikutnya
+      if (finalY + 28 > pageHeight - 8) {
+        doc.addPage();
+        finalY = 16;
+      }
+
+      const signX = pageWidth - 58;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.4);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`Tangerang, ${currentDate}`, signX, finalY, { align: 'left' });
+      doc.text('Guru Mata Pelajaran PAI,', signX, finalY + 3.8, { align: 'left' });
+
+      // Gambar TTD Otomatis (Dari Google Drive / File Gambar / TTD Resmi)
+      try {
+        const sigImg = await getTeacherSignatureDataUrl();
+        if (sigImg) {
+          doc.addImage(sigImg, 'PNG', signX - 2, finalY + 4.8, 34, 15.5);
+        }
+      } catch (err) {
+        console.warn('Gagal memuat gambar TTD:', err);
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(15, 23, 42);
+      doc.text('Ahmad Nawasyi, S.Pd', signX, finalY + 22.5, { align: 'left' });
+      doc.setDrawColor(15, 23, 42);
+      doc.setLineWidth(0.25);
+      doc.line(signX, finalY + 23.5, signX + 38, finalY + 23.5);
+
+      const safeClass = reportClassFilter === 'all' ? 'Semua_Kelas' : `Kelas_${reportClassFilter}`;
+      const filename = `Laporan_Tugas_Online_${safeClass}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      doc.save(filename);
+
+      Swal.fire({
+        icon: 'success',
+        title: 'Laporan PDF Berhasil Diunduh!',
+        text: `File ${filename} berhasil disimpan.`,
+        timer: 2000,
+        showConfirmButton: false,
+        heightAuto: false
+      });
+    } catch (err: any) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Gagal Membuat PDF',
+        text: err.message || 'Terjadi kesalahan saat mengekspor laporan PDF.',
+        heightAuto: false
+      });
+    }
+  };
+
   return (
     <div className="space-y-3 md:space-y-6 animate-fadeIn pb-20">
       <button 
@@ -882,19 +1339,6 @@ const TeacherTaskCheck: React.FC = () => {
         </div>
         
         <div className="flex flex-col sm:flex-row items-stretch md:items-center gap-2">
-          {/* EXCEL EXPORT BUTTON FOR ONLINE TASKS */}
-          {activeTab === 'exams' && (
-            <button
-              type="button"
-              onClick={handleExportBelumTugasOnlineExcel}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-[10px] md:text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 shrink-0"
-              title="Download Laporan Nilai Excel untuk mengecek siswa yang belum mengerjakan tugas online (Per Kelas)"
-            >
-              <Download size={14} />
-              <span>Laporan Belum Tugas Online (Excel Per Kelas)</span>
-            </button>
-          )}
-
           {/* TABS SWITCHER */}
           <div className="bg-slate-100 p-1 rounded-xl flex">
               <button 
@@ -1212,6 +1656,201 @@ const TeacherTaskCheck: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* ======================================================== */}
+      {/* KARTU BARU: DATA LAPORAN TUGAS ONLINE */}
+      {/* ======================================================== */}
+      {activeTab === 'exams' && (
+        <div className="bg-white rounded-2xl md:rounded-3xl border border-slate-100 p-4 md:p-6 shadow-sm space-y-5 mt-4 md:mt-6">
+          {/* Header Kartu & Tombol Laporan (Dipindahkan ke Sini & Format PDF & JSON) */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100">
+                <CheckCircle2 size={22} />
+              </div>
+              <div>
+                <h2 className="text-sm md:text-base font-black text-slate-800 uppercase tracking-tight">
+                  DATA LAPORAN TUGAS ONLINE
+                </h2>
+                <p className="text-slate-400 text-[10px] md:text-xs font-medium">
+                  Status otomatis pengerjaan tugas online siswa berdasarkan pencocokan data pada sheet <span className="font-bold text-slate-600">hasil_ujian</span> (Nama &amp; NIS).
+                </p>
+              </div>
+            </div>
+
+            {/* Tombol Laporan Belum Tugas Online di Atas Kartu (Format PDF) */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExportReportPDF}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-[10px] md:text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95 shrink-0 cursor-pointer"
+                title="Unduh Laporan Belum Tugas Online dalam format PDF"
+              >
+                <FileText size={14} />
+                <span>Laporan Belum Tugas Online (PDF)</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleConfigureSignatureLink}
+                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-2 rounded-xl text-[10px] md:text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs active:scale-95 shrink-0 cursor-pointer"
+                title="Atur atau upload file / link gambar TTD (Google Drive / PNG)"
+              >
+                <ImageIcon size={14} />
+                <span>Link / Upload TTD</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Statistik Ringkasan */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 md:gap-3">
+            <div className="bg-slate-50 p-3 md:p-3.5 rounded-xl md:rounded-2xl border border-slate-100">
+              <span className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Siswa</span>
+              <span className="text-base md:text-xl font-black text-slate-800 mt-0.5 block">{onlineReportStats.total} Siswa</span>
+            </div>
+            <div className="bg-emerald-50/70 p-3 md:p-3.5 rounded-xl md:rounded-2xl border border-emerald-100/80">
+              <span className="text-[9px] md:text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Sudah Mengerjakan</span>
+              <span className="text-base md:text-xl font-black text-emerald-700 mt-0.5 block">{onlineReportStats.sudah} Siswa</span>
+            </div>
+            <div className="bg-red-50/70 p-3 md:p-3.5 rounded-xl md:rounded-2xl border border-red-100/80">
+              <span className="text-[9px] md:text-[10px] font-bold text-red-600 uppercase tracking-wider block">Belum Mengerjakan</span>
+              <span className="text-base md:text-xl font-black text-red-600 mt-0.5 block">{onlineReportStats.belum} Siswa</span>
+            </div>
+            <div className="bg-blue-50/70 p-3 md:p-3.5 rounded-xl md:rounded-2xl border border-blue-100/80">
+              <span className="text-[9px] md:text-[10px] font-bold text-blue-700 uppercase tracking-wider block">Ketuntasan Kelas</span>
+              <span className="text-base md:text-xl font-black text-blue-700 mt-0.5 block">{onlineReportStats.percentage}%</span>
+            </div>
+          </div>
+
+          {/* Filter Bar (Filter Kelas & Pencarian Siswa) */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Filter Kelas */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Filter Kelas:</span>
+                <select
+                  value={reportClassFilter}
+                  onChange={(e) => setReportClassFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded-xl text-[10px] md:text-xs font-bold border border-slate-200 bg-white text-slate-700 outline-none focus:border-emerald-500 transition-all cursor-pointer"
+                >
+                  <option value="all">Semua Kelas</option>
+                  {availableReportClasses.map((cls) => (
+                    <option key={cls} value={cls}>Kelas {cls}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter Status */}
+              <select
+                value={reportStatusFilter}
+                onChange={(e) => setReportStatusFilter(e.target.value as any)}
+                className="px-3 py-1.5 rounded-xl text-[10px] md:text-xs font-bold border border-slate-200 bg-white text-slate-700 outline-none focus:border-emerald-500 transition-all cursor-pointer"
+              >
+                <option value="all">Semua Status</option>
+                <option value="sudah">Hanya Sudah</option>
+                <option value="belum">Hanya Belum</option>
+              </select>
+            </div>
+
+            {/* Pencarian Nama Siswa */}
+            <div className="relative min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+              <input
+                type="text"
+                placeholder="Cari nama / NIS siswa..."
+                value={reportSearchQuery}
+                onChange={(e) => setReportSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 rounded-xl text-[10px] md:text-xs font-bold border border-slate-200 bg-white text-slate-700 outline-none focus:border-emerald-500 transition-all placeholder:font-medium"
+              />
+            </div>
+          </div>
+
+          {/* Tabel List: Header NO | NAMA SISWA (Kelas) | Sudah atau Belum */}
+          <div className="border border-slate-100 rounded-2xl overflow-hidden shadow-xs">
+            <div className="max-h-[500px] overflow-y-auto scrollbar-thin">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-100 shadow-xs">
+                  <tr>
+                    <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center w-14">
+                      NO
+                    </th>
+                    <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      NAMA SISWA (Kelas)
+                    </th>
+                    <th className="px-4 py-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest text-center md:text-left">
+                      Sudah atau Belum
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {onlineReportData.length > 0 ? (
+                    onlineReportData.map((item: any, idx: number) => {
+                      return (
+                        <tr
+                          key={item.id || idx}
+                          className={`transition-colors border-b ${
+                            item.isSudah
+                              ? 'hover:bg-emerald-50/40 bg-white'
+                              : 'hover:bg-red-50/40 bg-red-50/20'
+                          }`}
+                        >
+                          <td className="px-4 py-3 text-center align-middle font-bold text-[10px] md:text-xs text-slate-500">
+                            {idx + 1}
+                          </td>
+                          <td className="px-4 py-3 align-middle">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-[11px] md:text-sm text-slate-800 leading-tight">
+                                {item.nama_siswa}
+                              </span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[9px] md:text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                                  Kelas {item.kelas}
+                                </span>
+                                <span className="text-[9px] md:text-[10px] font-medium text-slate-400">
+                                  NIS: {item.nis}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 align-middle">
+                            <div className="flex items-center gap-2.5">
+                              {/* Centang box otomatis */}
+                              <input
+                                type="checkbox"
+                                checked={item.isSudah}
+                                readOnly
+                                className={`w-4 h-4 rounded cursor-default ${
+                                  item.isSudah ? 'accent-emerald-600' : 'accent-slate-400 opacity-40'
+                                }`}
+                              />
+                              {item.isSudah ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] md:text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <CheckCircle2 size={13} className="text-emerald-600" />
+                                  <span>Sudah Mengerjakan {item.completedCount > 0 ? `(${item.completedCount} Tugas)` : ''}</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] md:text-xs font-bold bg-red-50 text-red-600 border border-red-200">
+                                  <span className="text-xs font-black">✕</span>
+                                  <span>Belum Mengerjakan</span>
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-12 text-center text-slate-400 text-xs">
+                        Tidak ada data siswa yang cocok dengan filter yang dipilih.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

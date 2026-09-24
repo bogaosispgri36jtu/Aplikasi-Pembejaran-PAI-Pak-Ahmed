@@ -1204,8 +1204,46 @@ const TeacherManageGrades: React.FC = () => {
     });
 
     try {
-      // 1. Calculate each student's final score and prepare clean records
-      const recordsToSave = students.map(student => {
+      // 1. Dapatkan daftar siswa KHUSUS kelas yang sedang aktif/dipilih, diurutkan menurut abjad nama (A-Z)
+      const allClassStudents = await db.getStudentsByKelas(selectedKelas);
+      const activeClassStudents = (allClassStudents.length > 0 ? allClassStudents : students)
+        .filter(s => String(s.kelas || '').trim().toLowerCase() === String(selectedKelas || '').trim().toLowerCase())
+        .sort((a, b) => (a.namalengkap || '').localeCompare(b.namalengkap || ''));
+
+      if (activeClassStudents.length === 0) {
+        throw new Error(`Tidak ditemukan siswa terdaftar di Kelas ${selectedKelas}.`);
+      }
+
+      // 2. Tentukan header kolom TP dan seluruh kolom nilai_rapot sesuai instruksi:
+      // id | student_id | nama_siswa | nis | kelas | semester | nilai_TP1 | nilai_TP2 | ... | rata2_nilaiharian | sts | sas | sakit | izin | alpha | sikap | rata2_nilaikeseluruhan | katrol | nilai_akhir | updated_at
+      const tpHdrs = currentClassTps.length > 0 
+        ? currentClassTps.map((_, idx) => `nilai_TP${idx + 1}`)
+        : ['nilai_TP1', 'nilai_TP2', 'nilai_TP3', 'nilai_TP4'];
+
+      const sheetHeaders = [
+        'id',
+        'student_id',
+        'nama_siswa',
+        'nis',
+        'kelas',
+        'semester',
+        ...tpHdrs,
+        'rata2_nilaiharian',
+        'sts',
+        'sas',
+        'sakit',
+        'izin',
+        'alpha',
+        'sikap',
+        'rata2_nilaikeseluruhan',
+        'katrol',
+        'nilai_akhir',
+        'updated_at'
+      ];
+
+      const sheetRows: any[][] = [];
+
+      const recordsToSave = activeClassStudents.map(student => {
         const studentId = student.id!;
         const calculs = calculateStudentNilaiAkhir(studentId);
         
@@ -1221,6 +1259,56 @@ const TeacherManageGrades: React.FC = () => {
           katrol: ''
         };
 
+        const rawSts = over.sts !== '' && over.sts !== undefined && over.sts !== null ? Number(over.sts) : '';
+        const rawSas = over.sas !== '' && over.sas !== undefined && over.sas !== null ? Number(over.sas) : '';
+        const finalAttitude = over.sikap || (calculs.sikapScore >= 90 ? 'Sangat Baik' : calculs.sikapScore >= 80 ? 'Baik' : calculs.sikapScore >= 70 ? 'Cukup' : 'Perlu Bimbingan');
+
+        const h = calculs.harian ?? 0;
+        const stsNum = (rawSts !== '' && !isNaN(rawSts)) ? rawSts : 0;
+        const sasNum = (rawSas !== '' && !isNaN(rawSas)) ? rawSas : 0;
+        const keh = calculs.kehadiranScore ?? 0;
+        const sik = calculs.sikapScore ?? 0;
+        const rKeseluruhan = (calculs.harian !== null || rawSts !== '' || rawSas !== '') 
+          ? parseFloat(((h + stsNum + sasNum + keh + sik) / 5).toFixed(1)) 
+          : '';
+
+        const tpScoresObj: Record<string, any> = {};
+        const tpVals: any[] = [];
+        if (currentClassTps.length > 0) {
+          currentClassTps.forEach((tp, idx) => {
+            const sc = calculateStudentTpScore(studentId, tp.id);
+            const val = sc !== null && sc !== undefined ? sc : '';
+            tpScoresObj[`nilai_TP${idx + 1}`] = val;
+            tpVals.push(val);
+          });
+        } else {
+          tpVals.push('', '', '', '');
+        }
+
+        const nowISO = new Date().toISOString();
+
+        // Baris untuk Google Sheets
+        sheetRows.push([
+          overallKey,
+          studentId,
+          student.namalengkap || '-',
+          student.nis || '-',
+          selectedKelas,
+          selectedSemester,
+          ...tpVals,
+          calculs.harian !== null ? calculs.harian : '',
+          rawSts !== '' && !isNaN(rawSts) ? rawSts : '',
+          rawSas !== '' && !isNaN(rawSas) ? rawSas : '',
+          over.kehadiran?.sakit || 0,
+          over.kehadiran?.izin || 0,
+          over.kehadiran?.alpha || 0,
+          finalAttitude,
+          rKeseluruhan,
+          over.katrol !== '' && !isNaN(Number(over.katrol)) ? Number(over.katrol) : 0,
+          calculs.finalScore !== null ? calculs.finalScore : '',
+          nowISO
+        ]);
+
         return {
           id: overallKey,
           student_id: studentId,
@@ -1228,119 +1316,48 @@ const TeacherManageGrades: React.FC = () => {
           nis: student.nis || '-',
           kelas: selectedKelas,
           semester: selectedSemester,
-          sts: over.sts !== '' ? Number(over.sts) : '',
-          sas: over.sas !== '' ? Number(over.sas) : '',
+          ...tpScoresObj,
+          rata2_nilaiharian: calculs.harian !== null ? calculs.harian : '',
+          sts: rawSts !== '' && !isNaN(rawSts) ? rawSts : '',
+          sas: rawSas !== '' && !isNaN(rawSas) ? rawSas : '',
           sakit: over.kehadiran?.sakit || 0,
           izin: over.kehadiran?.izin || 0,
           alpha: over.kehadiran?.alpha || 0,
-          sikap: over.sikap || '',
-          katrol: over.katrol !== '' ? Number(over.katrol) : '',
-          nilai_akhir: calculs.finalScore !== null ? calculs.finalScore : ''
+          sikap: finalAttitude,
+          rata2_nilaikeseluruhan: rKeseluruhan,
+          katrol: over.katrol !== '' && over.katrol !== undefined && over.katrol !== null && !isNaN(Number(over.katrol)) ? Number(over.katrol) : '',
+          nilai_akhir: calculs.finalScore !== null ? calculs.finalScore : '',
+          updated_at: nowISO
         };
       });
 
-      // 2. Save list for this class & semester (triggers background sync!)
-      await db.saveKelolaNilai(recordsToSave);
+      // 2. Simpan dan sinkronkan hanya berdasarkan kelas yang dipilih ke sheet nilai_rapot
+      const sheetValues = [sheetHeaders, ...sheetRows];
+      await db.saveKelolaNilai(recordsToSave, selectedKelas, sheetValues);
 
-      // 3. Sync Ledger scores directly to student "Nilai" table so they show up publically under /#/nilai
-      for (const student of students) {
-        const studentId = student.id!;
-        const calculs = calculateStudentNilaiAkhir(studentId);
-        const overallKey = `${studentId}_${selectedSemester}`;
-        const over = overalls[overallKey] || {
-          sts: '',
-          sas: '',
-          sikap: '',
-          kehadiran: { sakit: 0, izin: 0, alpha: 0 }
-        };
-
-        const listToUpdate: Array<{ score: number; type: 'harian' | 'uts' | 'uas' | 'praktik'; desc: string }> = [];
-
-        // Rata-Rata Harian
-        if (calculs.harian !== null) {
-          listToUpdate.push({
-            score: Math.round(calculs.harian),
-            type: 'harian',
-            desc: 'Rata-Rata Nilai Harian (TP)'
-          });
-        }
-
-        // STS
-        if (over.sts !== '') {
-          listToUpdate.push({
-            score: Number(over.sts),
-            type: 'uts',
-            desc: 'Sumatif Tengah Semester (STS)'
-          });
-        }
-
-        // SAS
-        if (over.sas !== '') {
-          listToUpdate.push({
-            score: Number(over.sas),
-            type: 'uas',
-            desc: 'Sumatif Akhir Semester (SAS)'
-          });
-        }
-
-        // Sikap
-        const attitudeVal = over.sikap || getAttitudeTextFromScore(calculs.sikapScore);
-        listToUpdate.push({
-          score: calculs.sikapScore,
-          type: 'praktik',
-          desc: `Penilaian Sikap: ${attitudeVal}`
-        });
-
-        // Kehadiran
-        listToUpdate.push({
-          score: calculs.kehadiranScore,
-          type: 'harian',
-          desc: `Persentase Kehadiran (Sakit: ${over.kehadiran?.sakit || 0}, Izin: ${over.kehadiran?.izin || 0}, Alfa: ${over.kehadiran?.alpha || 0})`
-        });
-
-        // RATA-RATA TOTAL / LEDGER
-        const hVal = calculs.harian ?? 0;
-        const stsVal = over.sts !== '' ? Number(over.sts) : 0;
-        const sasVal = over.sas !== '' ? Number(over.sas) : 0;
-        const kehVal = calculs.kehadiranScore;
-        const sikVal = calculs.sikapScore;
-        const averageLedger = Math.round((hVal + stsVal + sasVal + kehVal + sikVal) / 5);
-
-        listToUpdate.push({
-          score: averageLedger,
-          type: 'harian',
-          desc: 'Rata-Rata Ledger (Harian, STS, SAS, Kehadiran, Sikap)'
-        });
-
-        // Nilai Akhir
-        if (calculs.finalScore !== null) {
-          listToUpdate.push({
-            score: calculs.finalScore,
-            type: 'uas',
-            desc: 'Nilai Akhir Rapor (Nilai Rapot)'
-          });
-        }
-
-        // Save each to standard db Grade table
-        for (const item of listToUpdate) {
-          await db.addGrade({
-            student_id: studentId,
-            subject_type: item.type,
-            score: item.score,
-            description: item.desc,
-            kelas: selectedKelas,
-            semester: selectedSemester,
-            created_at: new Date().toISOString()
-          });
-        }
+      // 3. Bersihkan jika sebelumnya pernah ada entri ledger summary di tabel Nilai
+      const currentGrades = db.getLocalTable<any>('Nilai');
+      const cleanGrades = currentGrades.filter((g: any) => {
+        const d = g.description || '';
+        return !d.startsWith('Rata-Rata Nilai Harian') &&
+               !d.startsWith('Sumatif Tengah Semester') &&
+               !d.startsWith('Sumatif Akhir Semester') &&
+               !d.startsWith('Penilaian Sikap') &&
+               !d.startsWith('Persentase Kehadiran') &&
+               !d.startsWith('Rata-Rata Ledger') &&
+               !d.startsWith('Nilai Akhir Rapor');
+      });
+      if (cleanGrades.length !== currentGrades.length) {
+        db.setLocalTable('Nilai', cleanGrades);
+        db.syncTableToGoogleSheets('Nilai').catch(() => {});
       }
 
       Swal.close();
       setTimeout(() => {
         Swal.fire({
           icon: 'success',
-          title: 'Berhasil Disinkronkan!',
-          text: `Data Nilai Rapot Kelas ${selectedKelas} Semester ${selectedSemester} berhasil disimpan dan disinkronkan ke Google Sheets!`,
+          title: 'Berhasil Disimpan!',
+          text: `Data Nilai Rapot Kelas ${selectedKelas} Semester ${selectedSemester} berhasil disimpan ke sheet nilai_rapot di Google Sheets!`,
           confirmButtonColor: '#059669',
           heightAuto: false
         });
@@ -1925,9 +1942,10 @@ const TeacherManageGrades: React.FC = () => {
                 onClick={handleSaveAndSyncKelolaNilai}
                 disabled={syncingKelola}
                 className="py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1.5 shadow-sm disabled:opacity-50 active:scale-95 duration-100"
+                title="Simpan nilai ke sheet nilai_rapot di Google Sheets"
               >
                 <Save size={13} />
-                {syncingKelola ? 'Menyinkronkan...' : 'Simpan & Sinkronkan Google Sheets'}
+                {syncingKelola ? 'Menyimpan...' : 'SIMPAN'}
               </button>
 
               <button 
